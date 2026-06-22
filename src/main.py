@@ -2,16 +2,19 @@ import os
 import sys
 import json
 import gc
+import hashlib
+import random
+import string
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, 
                              QGridLayout, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QSpacerItem, QSizePolicy, QDialog, 
                              QLineEdit, QLabel, QCheckBox, QFormLayout, QComboBox,
-                             QFileDialog, QColorDialog, QTabBar, QMessageBox, QScrollArea, QMenu, QFrame)
+                             QFileDialog, QColorDialog, QTabBar, QMessageBox, QScrollArea, QMenu, QFrame, QGraphicsBlurEffect)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import (QWebEngineProfile, QWebEnginePermission, QWebEngineDownloadRequest, 
                                    QWebEnginePage, QWebEngineSettings, QWebEngineScript, QWebEngineUrlRequestInterceptor)
 from PyQt6.QtCore import QUrl, QSize, Qt, QMimeData, QPoint, QTimer, QEvent, QRect
-from PyQt6.QtGui import QIcon, QPixmap, QPalette, QBrush, QColor, QDrag, QAction, QCursor, QImage
+from PyQt6.QtGui import QIcon, QPixmap, QPalette, QBrush, QColor, QDrag, QAction, QCursor, QImage, QShortcut, QKeySequence, QPainter
 
 # ==============================================================================
 # OTIMIZAÇÕES DE NÚCLEO E ACELERAÇÃO DE HARDWARE
@@ -27,19 +30,377 @@ os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
-# ==============================================================================
-# INTERCEPTADOR DE REDE: O BYPASS DEFINITIVO PARA O GOOGLE LOGIN
-# ==============================================================================
 class GoogleLoginInterceptor(QWebEngineUrlRequestInterceptor):
     def interceptRequest(self, info):
         url = info.requestUrl().toString()
-        # Se a requisição for para o Google, Youtube ou Gmail, mascaramos como Firefox no HTTP Header
         if "accounts.google.com" in url or "youtube.com" in url or "myaccount.google.com" in url:
             firefox_ua = b"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0"
             info.setHttpHeader(b"User-Agent", firefox_ua)
 
 # ==============================================================================
-# SUBCLASSE PARA CARTÃO ARRASTÁVEL
+# TELAS DE SEGURANÇA E BLOQUEIO - CHAVE MESTRA (OFFLINE)
+# ==============================================================================
+class SecuritySetupDialog(QDialog):
+    def __init__(self, parent, current_data):
+        super().__init__(parent)
+        self.hub = parent
+        self.setWindowTitle("Configurar Senha de Acesso")
+        self.setFixedWidth(450)
+        self.setWindowOpacity(0.95)
+        
+        self.current_data = current_data or {}
+        accent = self.hub.accent_color
+        
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {accent}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; }}
+            QLineEdit {{ background-color: #161b24; border: 1px solid {accent}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; font-weight: bold; }}
+            QPushButton {{ background-color: {accent}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
+            QPushButton#btn_voltar {{ background-color: #161b24; color: #fff; border: 1px solid #232a38; }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(25, 25, 25, 25)
+        layout.setSpacing(15)
+        
+        form_layout = QFormLayout()
+        form_layout.setSpacing(15)
+        
+        self.input_name = QLineEdit(self.current_data.get("name", ""))
+        self.input_name.setPlaceholderText("Ex: Felipe Fiuza")
+        
+        self.input_pass = QLineEdit()
+        self.input_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_pass.setPlaceholderText("Digite uma nova senha")
+        
+        self.input_confirm = QLineEdit()
+        self.input_confirm.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_confirm.setPlaceholderText("Confirme a nova senha")
+        
+        self.input_hint = QLineEdit(self.current_data.get("hint", ""))
+        self.input_hint.setPlaceholderText("Dica de senha")
+        
+        self.input_image = QLineEdit(self.current_data.get("image", ""))
+        self.input_image.setPlaceholderText("Caminho da imagem (Opcional)")
+        btn_img = QPushButton("🖼️ Procurar")
+        btn_img.clicked.connect(self.select_image)
+        
+        img_layout = QHBoxLayout()
+        img_layout.addWidget(self.input_image)
+        img_layout.addWidget(btn_img)
+        
+        form_layout.addRow(QLabel("Nome:"), self.input_name)
+        form_layout.addRow(QLabel("Nova senha:"), self.input_pass)
+        form_layout.addRow(QLabel("Confirme:"), self.input_confirm)
+        form_layout.addRow(QLabel("Dica de senha:"), self.input_hint)
+        form_layout.addRow(QLabel("Imagem:"), img_layout)
+        
+        layout.addLayout(form_layout)
+        
+        btn_layout = QHBoxLayout()
+        btn_confirm = QPushButton("Confirmar")
+        btn_back = QPushButton("Voltar")
+        btn_back.setObjectName("btn_voltar")
+        
+        btn_confirm.clicked.connect(self.save_security)
+        btn_back.clicked.connect(self.reject)
+        
+        btn_layout.addWidget(btn_confirm)
+        btn_layout.addWidget(btn_back)
+        layout.addLayout(btn_layout)
+
+    def select_image(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Selecionar Imagem de Bloqueio", "", "Imagens (*.png *.jpg *.jpeg)")
+        if path:
+            self.input_image.setText(path)
+
+    def generate_master_key(self):
+        chars = string.ascii_uppercase + string.digits
+        return f"FIUZA-{''.join(random.choices(chars, k=4))}-{''.join(random.choices(chars, k=4))}"
+
+    def save_security(self):
+        name = self.input_name.text().strip()
+        pwd = self.input_pass.text().strip()
+        conf = self.input_confirm.text().strip()
+        hint = self.input_hint.text().strip()
+        img = self.input_image.text().strip()
+        
+        if not name or not pwd:
+            QMessageBox.warning(self, "Erro", "Nome e Senha são obrigatórios.")
+            return
+        if pwd != conf:
+            QMessageBox.warning(self, "Erro", "As senhas não coincidem.")
+            return
+            
+        hashed_pwd = hashlib.sha256(pwd.encode()).hexdigest()
+        
+        # Gerar a Chave Mestra Segura
+        master_key = self.generate_master_key()
+        master_key_hash = hashlib.sha256(master_key.encode()).hexdigest()
+        
+        QMessageBox.warning(self, "MUITO IMPORTANTE: CHAVE MESTRA", 
+                            f"Anote esta Chave de Recuperação em um lugar seguro. "
+                            f"Ela é a ÚNICA forma de recuperar sua conta caso esqueça a senha.\n\n"
+                            f"CHAVE MESTRA:\n{master_key}")
+        
+        self.final_data = {
+            "enabled": True,
+            "name": name,
+            "password_hash": hashed_pwd,
+            "master_key_hash": master_key_hash,
+            "hint": hint,
+            "image": img
+        }
+        self.accept()
+
+class SecurityModifyDialog(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.hub = parent
+        self.setWindowTitle("Modificar Segurança")
+        self.setFixedWidth(380)
+        self.setWindowOpacity(0.95)
+        accent = self.hub.accent_color
+        
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {accent}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 14px; font-weight: bold; text-align: center; }}
+            QPushButton {{ background-color: {accent}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 12px; border-radius: 6px; font-size: 13px; }}
+            QPushButton#btn_danger {{ background-color: #ff5252; color: #fff; border: 1px solid #000000; }}
+            QPushButton#btn_voltar {{ background-color: #161b24; color: #fff; border: 1px solid #232a38; }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(25, 25, 25, 25)
+        layout.setSpacing(15)
+        
+        layout.addWidget(QLabel("Deseja alterar ou remover a senha?"))
+        
+        btn_alterar = QPushButton("Alterar Senha")
+        btn_remover = QPushButton("Remover Senha")
+        btn_remover.setObjectName("btn_danger")
+        btn_voltar = QPushButton("Voltar")
+        btn_voltar.setObjectName("btn_voltar")
+        
+        btn_alterar.clicked.connect(self.do_alterar)
+        btn_remover.clicked.connect(self.do_remover)
+        btn_voltar.clicked.connect(self.reject)
+        
+        layout.addWidget(btn_alterar)
+        layout.addWidget(btn_remover)
+        layout.addWidget(btn_voltar)
+
+    def do_remover(self):
+        self.hub.security_settings = {}
+        self.hub.save_settings(force=True)
+        QMessageBox.information(self, "Sucesso", "A senha foi removida do sistema.")
+        self.accept()
+
+    def do_alterar(self):
+        self.accept()
+        dialog = SecurityChangePasswordDialog(self.hub)
+        dialog.exec()
+
+class SecurityChangePasswordDialog(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.hub = parent
+        self.setWindowTitle("Alterar Senha")
+        self.setFixedWidth(400)
+        self.setWindowOpacity(0.95)
+        accent = self.hub.accent_color
+        
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {accent}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; }}
+            QLineEdit {{ background-color: #161b24; border: 1px solid {accent}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; font-weight: bold; }}
+            QPushButton {{ background-color: {accent}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
+            QPushButton#btn_voltar {{ background-color: #161b24; color: #fff; border: 1px solid #232a38; }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+        
+        self.input_pass = QLineEdit()
+        self.input_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_pass.setPlaceholderText("Nova senha")
+        
+        self.input_confirm = QLineEdit()
+        self.input_confirm.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_confirm.setPlaceholderText("Confirmar nova senha")
+        
+        form_layout.addRow("Nova Senha:", self.input_pass)
+        form_layout.addRow("Confirmar:", self.input_confirm)
+        layout.addLayout(form_layout)
+        
+        btn_layout = QHBoxLayout()
+        btn_confirm = QPushButton("Confirmar")
+        btn_back = QPushButton("Voltar")
+        btn_back.setObjectName("btn_voltar")
+        
+        btn_confirm.clicked.connect(self.save_new_pass)
+        btn_back.clicked.connect(self.reject)
+        
+        btn_layout.addWidget(btn_confirm)
+        btn_layout.addWidget(btn_back)
+        layout.addLayout(btn_layout)
+
+    def save_new_pass(self):
+        pwd = self.input_pass.text().strip()
+        conf = self.input_confirm.text().strip()
+        
+        if not pwd:
+            QMessageBox.warning(self, "Erro", "Digite uma senha.")
+            return
+        if pwd != conf:
+            QMessageBox.warning(self, "Erro", "As senhas não coincidem.")
+            return
+            
+        hashed_pwd = hashlib.sha256(pwd.encode()).hexdigest()
+        self.hub.security_settings['password_hash'] = hashed_pwd
+        self.hub.save_settings(force=True)
+        QMessageBox.information(self, "Sucesso", "Senha alterada com sucesso!")
+        self.accept()
+
+class LockScreenWidget(QWidget):
+    def __init__(self, parent, security_data):
+        super().__init__(parent)
+        self.hub = parent
+        self.security_data = security_data
+        self.attempts = 0
+        self.setup_ui()
+
+    def setup_ui(self):
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.panel_container = QWidget(self)
+        self.panel_layout = QVBoxLayout(self.panel_container)
+        self.panel_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.panel = QFrame()
+        self.panel.setFixedSize(450, 480)
+        self.panel.setStyleSheet(f"""
+            QFrame {{ background-color: rgba(17, 20, 26, 0.85); border: 2px solid {self.hub.accent_color}; border-radius: 20px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; border: none; background: transparent; }}
+            QLineEdit {{ background-color: rgba(0, 0, 0, 0.5); border: 1px solid {self.hub.accent_color}; border-radius: 8px; color: #fff; padding: 12px; font-family: 'Segoe UI'; font-size: 15px; font-weight: bold; text-transform: uppercase; }}
+            QPushButton {{ background-color: {self.hub.accent_color}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 12px; border-radius: 8px; font-size: 14px; }}
+            QPushButton:hover {{ background-color: #ffffff; }}
+        """)
+        
+        self.inner_layout = QVBoxLayout(self.panel)
+        self.inner_layout.setContentsMargins(40, 40, 40, 40)
+        self.inner_layout.setSpacing(20)
+        
+        self.icon_lbl = QLabel("👤")
+        self.icon_lbl.setStyleSheet(f"font-size: 60px; color: {self.hub.accent_color};")
+        self.icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        first_name = self.security_data.get('name', 'Usuário').split(' ')[0]
+        self.lbl_greeting = QLabel(f"Olá! {first_name},\ndigite sua senha para acessar:")
+        self.lbl_greeting.setStyleSheet("font-size: 18px; font-weight: bold; text-align: center;")
+        self.lbl_greeting.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.input_pwd = QLineEdit()
+        self.input_pwd.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_pwd.setPlaceholderText("Senha secreta...")
+        self.input_pwd.returnPressed.connect(self.check_password)
+        
+        self.btn_unlock = QPushButton("Acessar o Hub")
+        self.btn_unlock.clicked.connect(self.check_password)
+        
+        self.lbl_error = QLabel("")
+        self.lbl_error.setStyleSheet("color: #ff5252; font-size: 13px; font-weight: bold;")
+        self.lbl_error.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.lbl_hint = QLabel(f"Dica: {self.security_data.get('hint', '')}")
+        self.lbl_hint.setStyleSheet("color: #8a909d; font-size: 12px;")
+        self.lbl_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.inner_layout.addStretch()
+        self.inner_layout.addWidget(self.icon_lbl)
+        self.inner_layout.addWidget(self.lbl_greeting)
+        self.inner_layout.addSpacing(10)
+        self.inner_layout.addWidget(self.input_pwd)
+        self.inner_layout.addWidget(self.btn_unlock)
+        self.inner_layout.addWidget(self.lbl_error)
+        self.inner_layout.addWidget(self.lbl_hint)
+        self.inner_layout.addStretch()
+        
+        self.panel_layout.addWidget(self.panel)
+        self.layout.addWidget(self.panel_container)
+        
+        # Elementos de Recuperação via Chave Mestra
+        self.input_key = QLineEdit()
+        self.input_key.setPlaceholderText("Digite a Chave Mestra (Ex: FIUZA-XXXX-XXXX)")
+        self.input_key.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.input_key.setVisible(False)
+        self.input_key.returnPressed.connect(self.validate_master_key)
+        
+        self.btn_validate = QPushButton("Validar Chave")
+        self.btn_validate.setVisible(False)
+        self.btn_validate.clicked.connect(self.validate_master_key)
+        
+        self.inner_layout.insertWidget(4, self.input_key)
+        self.inner_layout.insertWidget(5, self.btn_validate)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        bg_path = self.security_data.get('image', '')
+        if bg_path and os.path.exists(bg_path):
+            pixmap = QPixmap(bg_path).scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            x = (self.width() - pixmap.width()) // 2
+            y = (self.height() - pixmap.height()) // 2
+            painter.drawPixmap(x, y, pixmap)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 160)) 
+
+    def check_password(self):
+        pwd = self.input_pwd.text().strip()
+        hashed_pwd = hashlib.sha256(pwd.encode()).hexdigest()
+        
+        if hashed_pwd == self.security_data.get('password_hash'):
+            self.hub.centralWidget().setGraphicsEffect(None)
+            self.hide()
+            self.deleteLater()
+        else:
+            self.attempts += 1
+            self.input_pwd.clear()
+            self.lbl_error.setText("Usuário ou senha incorreta.")
+            if self.attempts >= 3:
+                self.trigger_recovery()
+
+    def trigger_recovery(self):
+        self.input_pwd.setVisible(False)
+        self.btn_unlock.setVisible(False)
+        self.lbl_hint.setVisible(False)
+        
+        self.lbl_error.setStyleSheet("color: #ffeb3b; font-size: 13px; font-weight: bold;")
+        self.lbl_error.setText("Bloqueio Ativo.\nPor favor, informe a sua Chave Mestra\nde Recuperação.")
+        
+        self.input_key.setVisible(True)
+        self.btn_validate.setVisible(True)
+
+    def validate_master_key(self):
+        master_key_input = self.input_key.text().strip().upper()
+        hashed_input = hashlib.sha256(master_key_input.encode()).hexdigest()
+        
+        if hashed_input == self.security_data.get('master_key_hash'):
+            self.input_key.clear()
+            dialog = SecuritySetupDialog(self.hub, self.security_data)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.hub.security_settings = dialog.final_data
+                self.hub.save_settings(force=True)
+                self.security_data = self.hub.security_settings
+                self.hub.centralWidget().setGraphicsEffect(None)
+                self.hide()
+                self.deleteLater()
+        else:
+            self.lbl_error.setStyleSheet("color: #ff5252; font-size: 13px; font-weight: bold;")
+            self.lbl_error.setText("Chave Mestra Inválida!")
+            self.input_key.clear()
+
+# ==============================================================================
+# SUBCLASSE PARA CARTÃO ARRASTÁVEL E TAB WIDGET
 # ==============================================================================
 class DraggableToolButton(QFrame):
     def __init__(self, item_data, item_index, parent_hub, parent=None):
@@ -73,10 +434,7 @@ class DraggableToolButton(QFrame):
         self.btn_delete = QPushButton("✕")
         self.btn_delete.setFixedSize(20, 20)
         self.btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_delete.setStyleSheet("""
-            QPushButton { background: transparent; color: rgba(255,82,82,0.8); font-weight: bold; border: none; font-size: 14px; }
-            QPushButton:hover { color: #ff0000; }
-        """)
+        self.btn_delete.setStyleSheet("QPushButton { background: transparent; color: rgba(255,82,82,0.8); font-weight: bold; border: none; font-size: 14px; } QPushButton:hover { color: #ff0000; }")
         self.btn_delete.clicked.connect(self.confirm_delete)
         
         self.icon_lbl = QLabel()
@@ -106,8 +464,7 @@ class DraggableToolButton(QFrame):
         self.subtitle_lbl = QLabel(subtitle_text)
         self.subtitle_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.subtitle_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        if not subtitle_text:
-            self.subtitle_lbl.hide()
+        if not subtitle_text: self.subtitle_lbl.hide()
             
         self.internal_layout.addWidget(self.title_lbl)
         self.internal_layout.addWidget(self.subtitle_lbl)
@@ -129,17 +486,8 @@ class DraggableToolButton(QFrame):
         border_bottom = "4px solid #ffeb3b" if is_fav else "1px solid rgba(0,0,0,0.3)"
         
         self.setStyleSheet(f"""
-            QFrame#Card {{
-                background-color: {accent};
-                border: 1px solid rgba(0,0,0,0.3);
-                border-bottom: {border_bottom};
-                border-radius: 12px;
-            }}
-            QFrame#Card:hover {{
-                background-color: {hover_dark_tint};
-                border: 1px solid {accent};
-                border-bottom: {border_bottom};
-            }}
+            QFrame#Card {{ background-color: {accent}; border: 1px solid rgba(0,0,0,0.3); border-bottom: {border_bottom}; border-radius: 12px; }}
+            QFrame#Card:hover {{ background-color: {hover_dark_tint}; border: 1px solid {accent}; border-bottom: {border_bottom}; }}
         """)
 
     def update_star_visual(self):
@@ -147,25 +495,16 @@ class DraggableToolButton(QFrame):
         accent = QColor(self.hub.accent_color)
         off_color = "rgba(0, 0, 0, 0.5)" if accent.lightness() > 140 else "rgba(255, 255, 255, 0.5)"
         color = "#ffeb3b" if is_fav else off_color
-        
-        self.btn_star.setStyleSheet(f"""
-            QPushButton {{ background: transparent; color: {color}; border: none; font-size: 18px; }}
-            QPushButton:hover {{ color: #ffeb3b; }}
-        """)
+        self.btn_star.setStyleSheet(f"QPushButton {{ background: transparent; color: {color}; border: none; font-size: 18px; }} QPushButton:hover {{ color: #ffeb3b; }}")
         self.btn_star.setText("★" if is_fav else "☆")
         self.update_card_style()
 
     def show_context_menu(self, pos):
         menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.hub.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; border-radius: 4px; padding: 5px; }}
-            QMenu::item {{ padding: 8px 25px; border-radius: 4px; }}
-            QMenu::item:selected {{ background-color: {self.hub.accent_color}; color: #000; }}
-        """)
+        menu.setStyleSheet(f"QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.hub.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; border-radius: 4px; padding: 5px; }} QMenu::item {{ padding: 8px 25px; border-radius: 4px; }} QMenu::item:selected {{ background-color: {self.hub.accent_color}; color: #000; }}")
         edit_action = menu.addAction("✏️ Editar Botão")
         action = menu.exec(self.mapToGlobal(pos))
-        if action == edit_action:
-            self.hub.edit_button_dialog(self.item_data)
+        if action == edit_action: self.hub.edit_button_dialog(self.item_data)
 
     def toggle_favorite(self):
         self.item_data["favorite"] = not self.item_data.get("favorite", False)
@@ -174,13 +513,8 @@ class DraggableToolButton(QFrame):
         self.hub.update_favorites_panel()
 
     def confirm_delete(self):
-        reply = QMessageBox.question(
-            self, "Confirmar Exclusão", 
-            f"Deseja apagar o botão '{self.item_data['label']}'? SIM OU NÃO.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self.hub.delete_button_by_data(self.item_data)
+        reply = QMessageBox.question(self, "Confirmar Exclusão", f"Deseja apagar o botão '{self.item_data['label']}'? SIM OU NÃO.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes: self.hub.delete_button_by_data(self.item_data)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -189,10 +523,8 @@ class DraggableToolButton(QFrame):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if event.buttons() != Qt.MouseButton.LeftButton:
-            return
-        if (event.pos() - self.__drag_start_pos).manhattanLength() < QApplication.startDragDistance():
-            return
+        if event.buttons() != Qt.MouseButton.LeftButton: return
+        if (event.pos() - self.__drag_start_pos).manhattanLength() < QApplication.startDragDistance(): return
         self.__drag_occurred = True
         drag = QDrag(self)
         mime_data = QMimeData()
@@ -203,8 +535,7 @@ class DraggableToolButton(QFrame):
         drag.exec(Qt.DropAction.MoveAction)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
+        if event.mimeData().hasText(): event.acceptProposedAction()
 
     def dropEvent(self, event):
         try:
@@ -213,8 +544,7 @@ class DraggableToolButton(QFrame):
             if source_index != target_index:
                 self.hub.reorder_buttons(source_index, target_index)
                 event.acceptProposedAction()
-        except ValueError:
-            pass
+        except ValueError: pass
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -222,22 +552,15 @@ class DraggableToolButton(QFrame):
                 self.__drag_occurred = False
                 event.accept()
                 return 
-            
             url = self.item_data["url"]
             label = self.item_data["label"]
             if url.startswith("remote://"):
                 tool = url.split("//")[1]
-                try:
-                    launch_remote_tool(tool)
-                except NameError:
-                    pass
-            else:
-                self.hub.open_web_tab(url, label)
+                try: launch_remote_tool(tool)
+                except: pass
+            else: self.hub.open_web_tab(url, label)
         super().mouseReleaseEvent(event)
 
-# ==============================================================================
-# SUBCLASSE DE QTABWIDGET ADAPTADA PARA CONTROLE DE ABAS REORDENÁVEIS
-# ==============================================================================
 class CustomTabWidget(QTabWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -251,12 +574,8 @@ class CustomTabWidget(QTabWidget):
             self.tabBar().tabMoved.connect(self.handle_tab_moved)
             return
         window = self.window()
-        if hasattr(window, 'track_tabs_after_move'):
-            window.track_tabs_after_move()
+        if hasattr(window, 'track_tabs_after_move'): window.track_tabs_after_move()
 
-# ==============================================================================
-# CLASSE PRINCIPAL STANDALONE HUB
-# ==============================================================================
 class StandaloneHub(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -298,11 +617,14 @@ class StandaloneHub(QMainWindow):
         self.save_tabs_enabled = False  
         self.opened_tabs_urls = []
         self.zoom_settings = {}
+        self.security_settings = {}
         self.current_page = 0
         self.items_per_page = 8
         self.is_restoring = False  
         self.search_filter = ""
+        self.is_wp_light = False 
         
+        self.theme_mode = "Escuro"
         self.accent_color = self.presets["Padrão (preto/branco)"]["accent"]       
         self.theme_base_color = self.presets["Padrão (preto/branco)"]["theme"]   
         self.background_image_path = "" 
@@ -314,11 +636,12 @@ class StandaloneHub(QMainWindow):
         self.profile.setCachePath(self.storage_path)
         self.profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
         self.profile.setHttpCacheMaximumSize(52428800) 
+        
+        # A JOGADA PARA O GOOGLE NÃO DESLOGAR (Força persistência em disco)
+        self.profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
+        
         self.profile.downloadRequested.connect(self.handle_download_request)
         
-        # ==============================================================================
-        # CONFIGURAÇÕES DE BYPASS (CLOUDFLARE/GOOGLE) - BLOCO FINAL
-        # ==============================================================================
         settings = self.profile.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
@@ -327,34 +650,15 @@ class StandaloneHub(QMainWindow):
         settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
         settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
         
-        # Identidade de Chrome 124 real (Windows 10/11)
-        chrome_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        self.profile.setHttpUserAgent(chrome_ua)
+        standard_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        self.profile.setHttpUserAgent(standard_ua)
         self.profile.setHttpAcceptLanguage("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
-        
-        # Injeção de "Anti-Anti-Bot"
-        stealth_script = QWebEngineScript()
-        stealth_script.setSourceCode("""
-            // Destrói os vestígios de automação
-            Object.defineProperty(navigator, 'webdriver', {get: () => false});
-            
-            // Corrige o bug do Google que não reconhece o navegador como 'seguro'
-            const getParameter = WebGLRenderingContext.prototype.getParameter;
-            WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                if (parameter === 37445) return 'Google Inc.';
-                if (parameter === 37446) return 'ANGLE (Intel, Intel(R) HD Graphics, OpenGL 4.5)';
-                return getParameter(parameter);
-            };
-        """)
-        stealth_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-        stealth_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
-        stealth_script.setRunsOnSubFrames(True)
-        self.profile.scripts().insert(stealth_script)
         
         self.interceptor = GoogleLoginInterceptor()
         self.profile.setUrlRequestInterceptor(self.interceptor)
 
         self.central_widget = QWidget()
+        self.central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -366,26 +670,50 @@ class StandaloneHub(QMainWindow):
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.currentChanged.connect(self.optimize_memory_without_reload)
         
-        self.btn_direct_nav = QPushButton("🔗")
-        self.btn_direct_nav.setToolTip("Navegar para URL Direta")
-        self.btn_direct_nav.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_direct_nav.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; color: white; padding: 4px; } QPushButton:hover { color: #12d97c; }")
-        self.btn_direct_nav.clicked.connect(self.open_direct_nav_dialog)
-        self.tabs.setCornerWidget(self.btn_direct_nav, Qt.Corner.TopLeftCorner)
+        self.corner_widget = QWidget()
+        corner_layout = QHBoxLayout(self.corner_widget)
+        corner_layout.setContentsMargins(5, 2, 5, 2)
+        corner_layout.setSpacing(5)
         
+        icons_vbox = QVBoxLayout()
+        icons_vbox.setContentsMargins(0, 0, 0, 0)
+        icons_vbox.setSpacing(2)
+        
+        self.btn_direct_nav = QPushButton("🔗")
+        self.btn_direct_nav.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_direct_nav.setFixedSize(22, 22)
+        self.btn_direct_nav.clicked.connect(self.open_direct_nav_dialog)
+        
+        self.btn_search_fav = QPushButton("🔍")
+        self.btn_search_fav.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_search_fav.setFixedSize(22, 22)
+        self.btn_search_fav.clicked.connect(self.toggle_fav_search)
+        
+        icons_vbox.addWidget(self.btn_direct_nav)
+        icons_vbox.addWidget(self.btn_search_fav)
+        
+        self.fav_search_bar = QLineEdit()
+        self.fav_search_bar.setPlaceholderText("Buscar favorito...")
+        self.fav_search_bar.setFixedWidth(130)
+        self.fav_search_bar.setFixedHeight(28)
+        self.fav_search_bar.setVisible(False)
+        self.fav_search_bar.textChanged.connect(self.filter_favorites)
+        
+        corner_layout.addLayout(icons_vbox)
+        corner_layout.addWidget(self.fav_search_bar, alignment=Qt.AlignmentFlag.AlignVCenter)
+        
+        self.tabs.setCornerWidget(self.corner_widget, Qt.Corner.TopLeftCorner)
         self.main_layout.addWidget(self.tabs)
         
         self.bottom_bar_widget = QWidget()
+        self.bottom_bar_widget.setObjectName("BottomBar")
         self.bottom_bar_widget.setFixedHeight(45)
         self.bottom_bar_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.bottom_bar_widget.setStyleSheet("background-color: transparent;")
         
         self.bottom_bar = QHBoxLayout(self.bottom_bar_widget)
         self.bottom_bar.setContentsMargins(15, 5, 15, 10)
         
         self.lbl_status = QLabel("")
-        self.lbl_status.setStyleSheet("font-family: 'Segoe UI'; font-weight: bold; font-size: 12px;")
-        
         self.btn_save_session = QPushButton("Save")
         self.btn_save_session.setFixedSize(100, 30)
         self.btn_save_session.clicked.connect(self.trigger_save_tabs_button)
@@ -393,18 +721,12 @@ class StandaloneHub(QMainWindow):
         self.bottom_bar.addWidget(self.lbl_status)
         self.bottom_bar.addStretch()
         self.bottom_bar.addWidget(self.btn_save_session)
-        
         self.main_layout.addWidget(self.bottom_bar_widget)
         
-        self.create_favorites_panel_widget()
-        
-        self.apply_styles()
         self.create_home_tab()
+        self.apply_styles()
         
         QTimer.singleShot(100, self.restore_tabs)
-        self.update_save_tabs_button_visual()
-        
-        self.update_favorites_panel() 
         
         self.tabs.tabBar().setMouseTracking(True)
         self.tabs.tabBar().installEventFilter(self)
@@ -414,11 +736,106 @@ class StandaloneHub(QMainWindow):
         self.mouse_check_timer.timeout.connect(self.check_mouse_position_for_favorites)
         self.mouse_check_timer.start()
 
+        self.shortcut_right = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
+        self.shortcut_right.activated.connect(self.safe_next_page)
+        self.shortcut_left = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
+        self.shortcut_left.activated.connect(self.safe_prev_page)
+        self.shortcut_esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self.shortcut_esc.activated.connect(self.safe_close_search)
+
+        self.showMaximized()
+        
+        if self.security_settings and self.security_settings.get("enabled", False):
+            self.show_lock_screen()
+
+    def show_lock_screen(self):
+        self.blur_effect = QGraphicsBlurEffect()
+        self.blur_effect.setBlurRadius(20)
+        self.centralWidget().setGraphicsEffect(self.blur_effect)
+        
+        self.lock_screen = LockScreenWidget(self, self.security_settings)
+        self.lock_screen.setGeometry(self.rect())
+        self.lock_screen.show()
+        self.lock_screen.raise_()
+
+    def contextMenuEvent(self, event):
+        if self.tabs.currentIndex() == 0 and self.security_settings.get("enabled", False):
+            menu = QMenu(self)
+            menu.setStyleSheet(f"""
+                QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; border-radius: 4px; padding: 5px; }}
+                QMenu::item {{ padding: 8px 25px; border-radius: 4px; }}
+                QMenu::item:selected {{ background-color: {self.accent_color}; color: #000; }}
+            """)
+            lock_action = menu.addAction("🔒 Trancar Tela")
+            action = menu.exec(self.mapToGlobal(event.pos()))
+            if action == lock_action:
+                self.show_lock_screen()
+        else:
+            super().contextMenuEvent(event)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, 'fav_panel_widget') and self.fav_panel_widget.isVisible():
-            tab_bar = self.tabs.tabBar()
-            self.fav_panel_widget.setGeometry(0, tab_bar.height() + 2, self.width(), 48)
+        if hasattr(self, 'lock_screen') and self.lock_screen.isVisible():
+            self.lock_screen.setGeometry(self.rect())
+
+    def toggle_fav_search(self):
+        is_visible = self.fav_search_bar.isVisible()
+        self.fav_search_bar.setVisible(not is_visible)
+        if not is_visible:
+            self.fav_search_bar.setFocus()
+            self.show_fav_panel()
+        else:
+            self.fav_search_bar.clear()
+            self.hide_fav_panel()
+
+    def safe_close_search(self):
+        if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible():
+            self.toggle_fav_search()
+
+    def filter_favorites(self, text):
+        self.update_favorites_panel(text)
+
+    def safe_next_page(self):
+        if self.tabs.currentIndex() == 0:
+            if hasattr(self, 'search_bar') and self.search_bar.hasFocus(): return
+            if hasattr(self, 'fav_search_bar') and self.fav_search_bar.hasFocus(): return
+            self.next_page()
+
+    def safe_prev_page(self):
+        if self.tabs.currentIndex() == 0:
+            if hasattr(self, 'search_bar') and self.search_bar.hasFocus(): return
+            if hasattr(self, 'fav_search_bar') and self.fav_search_bar.hasFocus(): return
+            self.prev_page()
+
+    def prev_page(self):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.filter_buttons_by_search(self.search_filter)
+
+    def next_page(self):
+        filtered_list = self.buttons_list
+        if self.search_filter:
+            filtered_list = [b for b in self.buttons_list if self.search_filter.strip().lower() in b["label"].lower()]
+        max_pages = max(0, (len(filtered_list) - 1) // self.items_per_page)
+        if self.current_page < max_pages:
+            self.current_page += 1
+            self.filter_buttons_by_search(self.search_filter)
+
+    def update_wallpaper_brightness(self):
+        self.is_wp_light = False
+        if hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path):
+            try:
+                img = QImage(self.background_image_path).scaled(50, 50, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+                lum = sum((img.pixelColor(x, y).red() * 0.299 + img.pixelColor(x, y).green() * 0.587 + img.pixelColor(x, y).blue() * 0.114) for x in range(50) for y in range(50)) / 2500
+                self.is_wp_light = lum > 128
+            except: pass
+
+    def get_active_theme_color(self):
+        c = QColor(self.theme_base_color)
+        if getattr(self, 'theme_mode', 'Escuro') == "Claro":
+            return QColor.fromHsl(c.hue(), min(c.saturation(), 60), 240).name()
+        else:
+            return QColor.fromHsl(c.hue(), c.saturation(), min(c.lightness(), 25)).name()
 
     def show_about_dialog(self):
         dialog = QDialog(self)
@@ -435,12 +852,10 @@ class StandaloneHub(QMainWindow):
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         btn_ok = QPushButton("OK")
         btn_ok.clicked.connect(dialog.accept)
-        
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         btn_layout.addWidget(btn_ok)
         btn_layout.addStretch()
-        
         layout.addStretch()
         layout.addWidget(lbl)
         layout.addSpacing(15)
@@ -454,10 +869,8 @@ class StandaloneHub(QMainWindow):
         if not image.isNull():
             image = image.scaled(72, 72, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             image = image.convertToFormat(QImage.Format.Format_ARGB32)
-            
             bg_color = image.pixelColor(0, 0)
             tolerance = 25
-            
             for y in range(image.height()):
                 for x in range(image.width()):
                     pixel_color = image.pixelColor(x, y)
@@ -465,7 +878,6 @@ class StandaloneHub(QMainWindow):
                         abs(pixel_color.green() - bg_color.green()) <= tolerance and
                         abs(pixel_color.blue() - bg_color.blue()) <= tolerance):
                         image.setPixelColor(x, y, QColor(0, 0, 0, 0)) 
-                        
             image.save(dest_path, "PNG")
 
     def edit_button_dialog(self, item_data):
@@ -475,7 +887,7 @@ class StandaloneHub(QMainWindow):
         dialog.setStyleSheet(f"""
             QDialog {{ background-color: #11141a; border: 1px solid #1c212d; }}
             QLabel {{ color: #a0a5b5; font-family: 'Segoe UI'; font-size: 12px; font-weight: bold; }}
-            QLineEdit {{ background-color: #161b24; border: 1px solid #232a38; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; }}
+            QLineEdit {{ background-color: #161b24; border: 1px solid {self.accent_color}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; }}
             QLineEdit:focus {{ border: 1px solid {self.accent_color}; }}
             QPushButton {{ font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
         """)
@@ -488,7 +900,7 @@ class StandaloneHub(QMainWindow):
         input_subtitle = QLineEdit(item_data.get("subtitle", ""))
         input_url = QLineEdit(item_data["url"])
         
-        btn_img = QPushButton("🖼️ Alterar Imagem (Opcional)")
+        btn_img = QPushButton("🖼️ Alterar Imagem")
         btn_img.setStyleSheet("background-color: #161b24; border: 1px solid #232a38; color: #fff; text-align: center;")
         selected_img = [""]
         
@@ -500,14 +912,13 @@ class StandaloneHub(QMainWindow):
                 btn_img.setStyleSheet(f"background-color: {self.accent_color}; color: #000; font-weight: bold; border: none;")
                 
         btn_img.clicked.connect(pick_img)
-        
         form_layout.addRow(QLabel("Nome do Botão:"), input_name)
         form_layout.addRow(QLabel("Nome do Subtítulo:"), input_subtitle)
         form_layout.addRow(QLabel("URL do Site:"), input_url)
         form_layout.addRow(btn_img)
         
         btn_box = QHBoxLayout()
-        btn_save = QPushButton("Salvar Alterações")
+        btn_save = QPushButton("Salvar")
         btn_save.setStyleSheet(f"background-color: {self.accent_color}; color: #07080a; text-align: center; padding-left: 0;")
         btn_back = QPushButton("Cancelar")
         btn_back.setStyleSheet("background-color: #161b24; border: 1px solid #232a38; color: #fff; text-align: center; padding-left: 0;")
@@ -530,7 +941,6 @@ class StandaloneHub(QMainWindow):
                     if os.path.exists(old_icon):
                         try: os.rename(old_icon, new_icon)
                         except: pass
-                
                 item_data["label"] = new_name
                 item_data["subtitle"] = new_sub
                 item_data["url"] = new_url
@@ -549,10 +959,8 @@ class StandaloneHub(QMainWindow):
         for i in range(1, self.tabs.count()):
             widget = self.tabs.widget(i)
             if isinstance(widget, QWebEngineView):
-                if i != index:
-                    widget.setVisible(False)
-                else:
-                    widget.setVisible(True)
+                if i != index: widget.setVisible(False)
+                else: widget.setVisible(True)
         import gc
         gc.collect()
 
@@ -572,39 +980,150 @@ class StandaloneHub(QMainWindow):
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(25, 25, 25, 25)
         layout.setSpacing(15)
-        
-        lbl = QLabel("🌐 Digite a URL para acessar:")
+        lbl = QLabel("🌐 Digite a URL:")
         input_url = QLineEdit()
         input_url.setPlaceholderText("Exemplo: google.com.br")
-        
         btn_layout = QHBoxLayout()
         btn_go = QPushButton("Acessar")
         btn_cancel = QPushButton("Cancelar")
         btn_cancel.setObjectName("btn_cancel")
-        
         btn_go.clicked.connect(dialog.accept)
         btn_cancel.clicked.connect(dialog.reject)
         input_url.returnPressed.connect(dialog.accept)
-        
         btn_layout.addWidget(btn_go)
         btn_layout.addWidget(btn_cancel)
-        
         layout.addWidget(lbl)
         layout.addWidget(input_url)
         layout.addLayout(btn_layout)
-        
         if dialog.exec() == QDialog.DialogCode.Accepted and input_url.text().strip():
             url = input_url.text().strip()
-            if not url.startswith("http://") and not url.startswith("https://"):
-                url = "https://" + url
+            if not url.startswith("http://") and not url.startswith("https://"): url = "https://" + url
             self.open_web_tab(url, "Carregando...")
 
-    def create_favorites_panel_widget(self):
+    def update_favorites_panel(self, filter_text=""):
+        if not hasattr(self, 'fav_hbox') or not self.fav_hbox: return
+        while self.fav_hbox.count():
+            child = self.fav_hbox.takeAt(0)
+            if child.widget(): child.widget().deleteLater()
+            
+        fav_items = [b for b in self.buttons_list if b.get("favorite", False)]
+        if filter_text:
+            fav_items = [b for b in fav_items if filter_text.strip().lower() in b["label"].lower()]
+            
+        for item in fav_items:
+            btn = QPushButton(item["label"])
+            btn.setFixedSize(130, 32)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(f"""
+                QPushButton {{ background-color: rgba({QColor(self.accent_color).red()}, {QColor(self.accent_color).green()}, {QColor(self.accent_color).blue()}, 0.85); border: 1px solid rgba(0,0,0,0.4); color: #07080a; font-size: 11px; font-weight: bold; border-radius: 4px; padding-left: 5px; padding-right: 5px; }}
+                QPushButton:hover {{ background-color: {self.accent_color}; color: #07080a; border: 1px solid #000000; }}
+            """)
+            btn.clicked.connect(lambda checked, u=item["url"], l=item["label"]: self.open_web_tab(u, l))
+            self.fav_hbox.addWidget(btn)
+        self.fav_hbox.addStretch()
+
+    def show_fav_panel(self):
+        if hasattr(self, 'fav_panel_widget') and not self.fav_panel_widget.isVisible():
+            if hasattr(self, 'fav_placeholder'): self.fav_placeholder.setVisible(False)
+            self.fav_panel_widget.setVisible(True)
+
+    def hide_fav_panel(self):
+        if hasattr(self, 'fav_panel_widget') and self.fav_panel_widget.isVisible():
+            if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible() and self.fav_search_bar.hasFocus(): return
+            self.fav_panel_widget.setVisible(False)
+            if hasattr(self, 'fav_placeholder'): self.fav_placeholder.setVisible(True)
+
+    def check_mouse_position_for_favorites(self):
+        if not hasattr(self, 'home_widget') or not self.home_widget: return
+        if not hasattr(self, 'fav_panel_widget'): return
+        
+        has_favs = any(b.get("favorite", False) for b in self.buttons_list)
+        if not has_favs or self.tabs.currentIndex() != 0:
+            self.hide_fav_panel()
+            return
+            
+        if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible() and self.fav_search_bar.hasFocus():
+            self.show_fav_panel()
+            return
+            
+        global_cursor_pos = QCursor.pos()
+        tab_bar = self.tabs.tabBar()
+        if tab_bar.count() == 0: return
+        
+        tb_rect = tab_bar.mapToGlobal(QPoint(0,0))
+        safe_rect = QRect(0, tb_rect.y(), self.width(), tab_bar.height() + 55)
+        
+        if safe_rect.contains(global_cursor_pos):
+            self.show_fav_panel()
+        else:
+            self.hide_fav_panel()
+
+    def eventFilter(self, obj, event):
+        if obj == self.tabs.tabBar():
+            if event.type() == QEvent.Type.MouseMove:
+                if self.tabs.currentIndex() == 0:
+                    has_favs = any(b.get("favorite", False) for b in self.buttons_list)
+                    if has_favs: self.show_fav_panel()
+        return super().eventFilter(obj, event)
+
+    def delete_button_by_data(self, item_data):
+        self.buttons_list = [b for b in self.buttons_list if b != item_data]
+        icon_path = os.path.join(self.icons_dir, f"{item_data['label'].lower()}.png")
+        if os.path.exists(icon_path):
+            try: os.remove(icon_path)
+            except: pass
+        self.save_settings(force=True)
+        self.filter_buttons_by_search(self.search_filter)
+        self.update_favorites_panel()
+
+    def handle_permission_request(self, request: QWebEnginePermission):
+        request.grant()
+
+    def handle_download_request(self, download: QWebEngineDownloadRequest):
+        default_name = download.downloadFileName()
+        if not default_name: default_name = "download_midia"
+        download_dir = os.path.join(os.path.expanduser('~'), 'Downloads')
+        suggested_path = os.path.join(download_dir, default_name)
+        file_path, _ = QFileDialog.getSaveFileName(self, "Salvar Arquivo", suggested_path)
+        if file_path:
+            download.setDownloadDirectory(os.path.dirname(file_path))
+            download.setDownloadFileName(os.path.basename(file_path))
+            download.accept()
+            self.lbl_status.setText(f"Baixando: {os.path.basename(file_path)}...")
+            download.receivedBytesChanged.connect(lambda: self.update_download_progress(download))
+        else:
+            download.interrupt()
+
+    def update_download_progress(self, download):
+        if download.state() == QWebEngineDownloadRequest.DownloadState.DownloadInProgress:
+            total = download.totalBytes()
+            received = download.receivedBytes()
+            if total > 0:
+                percent = int((received / total) * 100)
+                self.lbl_status.setText(f"Baixando... {percent}%")
+        elif download.state() == QWebEngineDownloadRequest.DownloadState.DownloadCompleted:
+            self.lbl_status.setText("Download concluído com sucesso!")
+            QTimer.singleShot(4000, lambda: self.lbl_status.setText("") if "concluído" in self.lbl_status.text() else None)
+
+    def create_home_tab(self):
+        if hasattr(self, 'home_widget') and self.home_widget:
+            self.tabs.removeTab(0)
+            self.home_widget.deleteLater()
+
+        self.home_widget = QWidget()
+        self.home_widget.setObjectName("HomeTab")
+        self.home_widget.setStyleSheet("background-color: transparent;")
+
+        home_vertical_layout = QVBoxLayout(self.home_widget)
+        home_vertical_layout.setContentsMargins(0, 0, 0, 0)
+        home_vertical_layout.setSpacing(0)
+        
+        # A CAIXA BLINDADA DOS FAVORITOS
         self.fav_placeholder = QWidget()
         self.fav_placeholder.setFixedHeight(48)
         self.fav_placeholder.setStyleSheet("background: transparent;")
         
-        self.fav_panel_widget = QWidget(self)
+        self.fav_panel_widget = QWidget()
         self.fav_panel_widget.setObjectName("FavPanelWidget")
         self.fav_panel_widget.setFixedHeight(48)
         self.fav_panel_widget.setVisible(False)
@@ -627,239 +1146,249 @@ class StandaloneHub(QMainWindow):
         self.fav_scroll.setWidget(self.fav_container)
         self.fav_layout.addWidget(self.fav_scroll)
 
-    def update_favorites_panel(self):
-        while self.fav_hbox.count():
-            child = self.fav_hbox.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-                
-        fav_items = [b for b in self.buttons_list if b.get("favorite", False)]
+        self.fav_area = QWidget()
+        self.fav_area.setFixedHeight(48)
+        self.fav_area_layout = QVBoxLayout(self.fav_area)
+        self.fav_area_layout.setContentsMargins(0,0,0,0)
+        self.fav_area_layout.setSpacing(0)
+        self.fav_area_layout.addWidget(self.fav_placeholder)
+        self.fav_area_layout.addWidget(self.fav_panel_widget)
+        home_vertical_layout.addWidget(self.fav_area)
         
-        for item in fav_items:
-            btn = QPushButton(item["label"])
-            btn.setFixedSize(130, 32)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: rgba({QColor(self.accent_color).red()}, {QColor(self.accent_color).green()}, {QColor(self.accent_color).blue()}, 0.35);
-                    border: 1px solid rgba(0,0,0,0.4);
-                    color: white;
-                    font-size: 11px;
-                    font-weight: bold;
-                    border-radius: 4px;
-                    padding-left: 5px;
-                    padding-right: 5px;
-                }}
-                QPushButton:hover {{
-                    background-color: {self.accent_color};
-                    color: #07080a;
-                }}
-            """)
-            btn.clicked.connect(lambda checked, u=item["url"], l=item["label"]: self.open_web_tab(u, l))
-            self.fav_hbox.addWidget(btn)
-            
-        self.fav_hbox.addStretch()
-
-    def check_mouse_position_for_favorites(self):
-        if not hasattr(self, 'home_widget') or not self.home_widget:
-            return
-            
-        if self.tabs.currentIndex() != 0:
-            if self.fav_panel_widget.isVisible():
-                self.fav_panel_widget.setVisible(False)
-                self.fav_placeholder.setVisible(True)
-            return
-
-        has_favs = any(b.get("favorite", False) for b in self.buttons_list)
-        if not has_favs:
-            if self.fav_panel_widget.isVisible():
-                self.fav_panel_widget.setVisible(False)
-                self.fav_placeholder.setVisible(True)
-            return
-            
-        global_cursor_pos = QCursor.pos()
-        tab_bar = self.tabs.tabBar()
-        if tab_bar.count() == 0:
-            return
-            
-        tab_rect = tab_bar.tabRect(0)
-        global_top_left = tab_bar.mapToGlobal(tab_rect.topLeft())
-        global_bottom_right = tab_bar.mapToGlobal(tab_rect.bottomRight())
-        
-        home_tab_global_rect = QRect(global_top_left, global_bottom_right)
-        
-        fav_global_topleft = self.fav_placeholder.mapToGlobal(QPoint(0,0))
-        fav_global_rect = QRect(fav_global_topleft.x(), fav_global_topleft.y(), self.fav_placeholder.width(), self.fav_placeholder.height())
-        
-        if home_tab_global_rect.contains(global_cursor_pos) or (self.fav_panel_widget.isVisible() and fav_global_rect.contains(global_cursor_pos)):
-            if not self.fav_panel_widget.isVisible():
-                self.fav_placeholder.setVisible(False)
-                self.fav_panel_widget.setGeometry(0, tab_bar.height() + 2, self.width(), 48)
-                self.fav_panel_widget.setVisible(True)
-                self.fav_panel_widget.raise_()
-        else:
-            if self.fav_panel_widget.isVisible():
-                self.fav_panel_widget.setVisible(False)
-                self.fav_placeholder.setVisible(True)
-
-    def eventFilter(self, obj, event):
-        if obj == self.tabs.tabBar():
-            if event.type() == QEvent.Type.MouseMove:
-                if self.tabs.currentIndex() == 0:
-                    idx = self.tabs.tabBar().tabAt(event.pos())
-                    if idx == 0:
-                        has_favs = any(b.get("favorite", False) for b in self.buttons_list)
-                        if has_favs and not self.fav_panel_widget.isVisible():
-                            self.fav_placeholder.setVisible(False)
-                            self.fav_panel_widget.setGeometry(0, self.tabs.tabBar().height() + 2, self.width(), 48)
-                            self.fav_panel_widget.setVisible(True)
-                            self.fav_panel_widget.raise_()
-        return super().eventFilter(obj, event)
-
-    def delete_button_by_data(self, item_data):
-        self.buttons_list = [b for b in self.buttons_list if b != item_data]
-        icon_path = os.path.join(self.icons_dir, f"{item_data['label'].lower()}.png")
-        if os.path.exists(icon_path):
-            try: os.remove(icon_path)
-            except: pass
-        self.save_settings(force=True)
-        self.filter_buttons_by_search(self.search_filter)
         self.update_favorites_panel()
-
-    def handle_permission_request(self, request: QWebEnginePermission):
-        request.grant()
-
-    def handle_download_request(self, download: QWebEngineDownloadRequest):
-        default_name = download.downloadFileName()
-        if not default_name:
-            default_name = "download_midia"
-            
-        download_dir = os.path.join(os.path.expanduser('~'), 'Downloads')
-        suggested_path = os.path.join(download_dir, default_name)
         
-        file_path, _ = QFileDialog.getSaveFileName(self, "Salvar Arquivo", suggested_path)
-        if file_path:
-            download.setDownloadDirectory(os.path.dirname(file_path))
-            download.setDownloadFileName(os.path.basename(file_path))
-            download.accept()
-            self.lbl_status.setText(f"Baixando: {os.path.basename(file_path)}...")
-            download.receivedBytesChanged.connect(lambda: self.update_download_progress(download))
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        
+        content_container = QWidget()
+        content_container.setStyleSheet("background: transparent;")
+        content_layout = QVBoxLayout(content_container)
+        content_layout.setContentsMargins(40, 20, 40, 25)
+        
+        control_panel_layout = QVBoxLayout()
+        control_panel_layout.setSpacing(10)
+        
+        has_wp = hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path)
+        text_color = "#111111" if getattr(self, 'is_wp_light', False) else "#f5f5f5"
+        
+        c_accent = QColor(self.accent_color)
+        c_theme = QColor(self.get_active_theme_color())
+        
+        if has_wp:
+            input_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.5)"
+            input_text = text_color
+            font_weight = "600"
+            page_color = text_color
         else:
-            download.interrupt()
+            is_light = c_theme.lightness() > 128
+            input_bg = "rgba(255, 255, 255, 0.1)" if not is_light else "rgba(0, 0, 0, 0.05)"
+            input_text = "#ffffff" if not is_light else "#07080a"
+            font_weight = "bold"
+            page_color = "#07080a" if is_light else "#ffffff"
 
-    def update_download_progress(self, download):
-        if download.state() == QWebEngineDownloadRequest.DownloadState.DownloadInProgress:
-            total = download.totalBytes()
-            received = download.receivedBytes()
-            if total > 0:
-                percent = int((received / total) * 100)
-                self.lbl_status.setText(f"Baixando... {percent}%")
-        elif download.state() == QWebEngineDownloadRequest.DownloadState.DownloadCompleted:
-            self.lbl_status.setText("Download concluído com sucesso!")
-            QTimer.singleShot(4000, lambda: self.lbl_status.setText("") if "concluído" in self.lbl_status.text() else None)
+        btn_ops = QPushButton("STANDALONE HUB")
+        btn_ops.setObjectName("btn_ops")
+        btn_ops.setFixedSize(450, 42)
+        btn_ops.clicked.connect(self.show_about_dialog)
+        
+        btn_config_menu = QPushButton("CONFIGURAÇÕES  ⚙")
+        btn_config_menu.setObjectName("btn_config_menu")
+        btn_config_menu.setFixedSize(450, 42)
+        btn_config_menu.clicked.connect(self.open_settings_dialog)
+        
+        self.search_bar = QLineEdit()
+        self.search_bar.setFixedSize(450, 42)
+        self.search_bar.setPlaceholderText("Digite aqui o botão que deseja acessar...")
+        self.search_bar.blockSignals(True)
+        self.search_bar.setText(self.search_filter)
+        self.search_bar.blockSignals(False)
+        self.search_bar.textChanged.connect(self.filter_buttons_by_search)
+        
+        self.search_bar.setStyleSheet(f"""
+            QLineEdit {{ background-color: {input_bg}; border: 1px solid rgba(0, 0, 0, 0.6); border-radius: 6px; color: {input_text}; font-family: 'Segoe UI'; font-size: 13px; font-weight: {font_weight}; padding-left: 15px; padding-right: 15px; }}
+            QLineEdit:focus {{ border: 2px solid {self.accent_color}; }}
+        """)
+        
+        control_panel_layout.addWidget(btn_ops, alignment=Qt.AlignmentFlag.AlignCenter)
+        control_panel_layout.addWidget(btn_config_menu, alignment=Qt.AlignmentFlag.AlignCenter)
+        control_panel_layout.addWidget(self.search_bar, alignment=Qt.AlignmentFlag.AlignCenter)
+        content_layout.addLayout(control_panel_layout)
+        content_layout.addSpacing(20)
+
+        self.grid_container_widget = QWidget()
+        self.grid_container_widget.setFixedHeight(315)
+        self.grid_container_layout = QVBoxLayout(self.grid_container_widget)
+        self.grid_container_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addWidget(self.grid_container_widget)
+        
+        self.grid_layout = QGridLayout()
+        self.grid_layout.setSpacing(25)
+        
+        grid_container_hbox = QHBoxLayout()
+        grid_container_hbox.addStretch()
+        grid_container_hbox.addLayout(self.grid_layout)
+        grid_container_hbox.addStretch()
+        self.grid_container_layout.addLayout(grid_container_hbox)
+
+        self.nav_container = QWidget()
+        self.nav_container.setFixedHeight(45)
+        nav_layout = QHBoxLayout(self.nav_container)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.addStretch()
+        
+        hover_dark_tint = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40)"
+        nav_style = f"""
+            QPushButton {{ background-color: {self.accent_color}; border: 1px solid #000000; color: #07080a; font-weight: bold; font-size: 15px; border-radius: 5px; }}
+            QPushButton:hover {{ background-color: {hover_dark_tint}; color: {self.accent_color}; border-color: {self.accent_color}; }}
+            QPushButton:disabled {{ border: 1px solid rgba(0,0,0,0.1); color: rgba(120, 120, 120, 0.5); background-color: rgba(0, 0, 0, 0.15); }}
+        """
+        
+        self.btn_prev_page = QPushButton("<")
+        self.btn_prev_page.setFixedSize(60, 40)
+        self.btn_prev_page.setStyleSheet(nav_style)
+        self.btn_prev_page.clicked.connect(self.prev_page)
+        
+        self.page_label = QLabel(f"Página {self.current_page + 1}")
+        self.page_label.setFixedWidth(80) 
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_label.setStyleSheet(f"color: {page_color}; font-weight: {font_weight}; font-size: 14px; font-family: 'Segoe UI'; background: transparent;")
+        
+        self.btn_next_page = QPushButton(">")
+        self.btn_next_page.setFixedSize(60, 40)
+        self.btn_next_page.setStyleSheet(nav_style)
+        self.btn_next_page.clicked.connect(self.next_page)
+        
+        nav_layout.addWidget(self.btn_prev_page)
+        nav_layout.addWidget(self.page_label)
+        nav_layout.addWidget(self.btn_next_page)
+        nav_layout.addStretch()
+        
+        content_layout.addWidget(self.nav_container)
+        content_layout.addStretch()
+        
+        scroll_area.setWidget(content_container)
+        home_vertical_layout.addWidget(scroll_area)
+
+        self.tabs.insertTab(0, self.home_widget, "Home")
+        self.filter_buttons_by_search(self.search_filter)
+        
+        if self.search_filter:
+            self.search_bar.setFocus()
+            self.search_bar.setSelection(len(self.search_filter), 0)
 
     def apply_styles(self):
         accent = self.accent_color
-        main_bg = self.theme_base_color
-        c_theme = QColor(main_bg)
-        is_light_theme = c_theme.lightness() > 128
-        text_color = "#07080a" if is_light_theme else "#ffffff"
-        tab_text_color = "#232a38" if is_light_theme else "#8a909d"
-        
-        if is_light_theme:
-            top_bar_bg = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(30, c_theme.lightness() - 12)).name()
-            tab_inactive_bg = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(40, c_theme.lightness() - 20)).name()
-        else:
-            top_bar_bg = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(5, c_theme.lightness() - 8)).name()
-            tab_inactive_bg = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(10, c_theme.lightness() + 6)).name()
-
         c_accent = QColor(accent)
-        bg_dark_tint = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.08)"
-        hover_dark_tint = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.35)"
-
-        self.setStyleSheet(f"""
-            QMainWindow {{ background-color: {top_bar_bg}; }}
-            QTabWidget::pane {{ border-top: 2px solid {accent}; background: {main_bg}; }}
-            QTabBar {{ background-color: {top_bar_bg}; border-bottom: 1px solid rgba(0,0,0,0.2); qproperty-drawBase: 0; }}
+        main_bg = self.get_active_theme_color()
+        c_theme = QColor(main_bg)
+        
+        is_light_theme = c_theme.lightness() > 128
+        
+        has_wp = hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path)
+        is_bg_light = getattr(self, 'is_wp_light', False)
+        
+        icon_col = "#07080a" if is_light_theme and not has_wp else "#ffffff"
+        self.btn_direct_nav.setStyleSheet(f"QPushButton {{ background: transparent; border: none; font-size: 14px; color: {icon_col}; }} QPushButton:hover {{ color: {accent}; }}")
+        self.btn_search_fav.setStyleSheet(f"QPushButton {{ background: transparent; border: none; font-size: 14px; color: {icon_col}; }} QPushButton:hover {{ color: {accent}; }}")
+        
+        search_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.25)"
+        text_search_fav = "#000000" if is_light_theme else "#ffffff"
+        if has_wp:
+            text_search_fav = "#111111" if is_bg_light else "#f5f5f5"
             
-            QTabBar::tab {{ 
-                background: {tab_inactive_bg}; 
-                color: {tab_text_color}; 
-                padding: 8px 24px 14px 24px; 
-                border-top-left-radius: 4px; 
-                border-top-right-radius: 4px; 
-                margin-right: 3px; 
-                margin-top: 6px; 
-                border: 1px solid rgba(0,0,0,0.15); 
-                border-bottom: none; 
-                font-family: 'Segoe UI'; 
-                font-weight: 500; 
-                font-size: 12px; 
-            }}
-            QTabBar::tab:selected {{ 
-                background: {main_bg}; 
-                color: {accent}; 
-                font-weight: bold; 
-                border: 1px solid {accent}; 
-                border-bottom: 4px solid {main_bg}; 
-                margin-top: 2px; 
-                padding-bottom: 16px; 
-            }}
+        self.fav_search_bar.setStyleSheet(f"""
+            QLineEdit {{ background-color: {search_bg}; border: 1px solid {accent}; border-radius: 4px; color: {text_search_fav}; font-family: 'Segoe UI'; font-size: 12px; font-weight: bold; padding: 0 5px; }}
+            QLineEdit:focus {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.5); }}
+        """)
+        
+        if has_wp:
+            bg_path = self.background_image_path.replace("\\", "/")
+            main_bg_style = f"border-image: url('{bg_path}') 0 0 0 0 stretch stretch;"
+            
+            tab_text_color = "#1a1a1a" if is_bg_light else "#e0e0e0"
+            tabbar_bg = "rgba(255, 255, 255, 0.35)" if is_bg_light else "rgba(0, 0, 0, 0.35)"
+            tab_inactive_bg = "rgba(255, 255, 255, 0.15)" if is_bg_light else "rgba(0, 0, 0, 0.15)"
+            tab_active_bg = "rgba(255, 255, 255, 0.85)" if is_bg_light else "rgba(20, 20, 20, 0.85)"
+            
+            pane_bg = "transparent"
+            pane_border = f"2px solid {accent}"
+            
+            btn_ops_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.5)"
+            btn_ops_hover_bg = accent
+            btn_ops_hover_text = "#07080a"
+            
+            text_color = "#111111" if is_bg_light else "#f5f5f5"
+            font_weight = "600"
+            bottom_bar_bg = btn_ops_bg
+        else:
+            solid_text_color = "#07080a" if is_light_theme else "#ffffff"
+            tab_text_color = "#232a38" if is_light_theme else "#8a909d"
+            top_bar_bg_solid = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(30, c_theme.lightness() - 12)).name() if is_light_theme else QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(5, c_theme.lightness() - 8)).name()
+            tab_inactive_bg_solid = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(40, c_theme.lightness() - 20)).name() if is_light_theme else QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(10, c_theme.lightness() + 6)).name()
+            
+            main_bg_style = f"background-color: {top_bar_bg_solid};"
+            tabbar_bg = top_bar_bg_solid
+            tab_inactive_bg = tab_inactive_bg_solid
+            tab_active_bg = main_bg
+            
+            pane_bg = main_bg
+            pane_border = f"2px solid {accent}"
+            
+            btn_ops_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.08)"
+            btn_ops_hover_bg = accent
+            btn_ops_hover_text = "#07080a"
+            
+            text_color = solid_text_color
+            font_weight = "bold"
+            bottom_bar_bg = "transparent"
+
+        self.lbl_status.setStyleSheet(f"color: {text_color}; font-family: 'Segoe UI'; font-weight: {font_weight}; font-size: 13px; background: transparent; border: none;")
+        
+        self.setStyleSheet(f"""
+            QWidget#CentralWidget {{ {main_bg_style} }}
+            QTabWidget::pane {{ border-top: {pane_border}; background: {pane_bg}; border-image: none; }}
+            QTabBar {{ background-color: {tabbar_bg}; border-bottom: 1px solid rgba(0,0,0,0.2); border-image: none; qproperty-drawBase: 0; }}
+            
+            QTabBar::tab {{ background: {tab_inactive_bg}; color: {tab_text_color}; padding: 8px 24px 14px 24px; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 3px; margin-top: 6px; border: 1px solid rgba(0,0,0,0.15); border-bottom: none; font-family: 'Segoe UI'; font-weight: 500; font-size: 12px; }}
+            QTabBar::tab:selected {{ background: {tab_active_bg}; color: {accent}; font-weight: bold; border: 1px solid {accent}; border-bottom: 4px solid {tab_active_bg}; margin-top: 2px; padding-bottom: 16px; }}
             QTabBar::close-button {{ subcontrol-position: right; margin-bottom: 4px; }}
             QTabBar::tab:first {{ qproperty-closable: false; }}
             
-            QWidget#HomeTab {{ background-color: {main_bg}; }}
+            QWidget#FavPanelWidget {{ background-color: rgba({c_theme.red()}, {c_theme.green()}, {c_theme.blue()}, 0.94); border-bottom: 1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.6); }}
+            QWidget#BottomBar {{ background-color: {bottom_bar_bg}; border-top: 1px solid rgba(0,0,0,0.2); }}
             
-            QWidget#FavPanelWidget {{
-                background-color: rgba({c_theme.red()}, {c_theme.green()}, {c_theme.blue()}, 0.94);
-                border-bottom: 1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.6);
-            }}
+            QPushButton#btn_ops {{ background-color: {btn_ops_bg}; border: 1px solid {accent}; color: {text_color}; font-weight: {font_weight}; border-radius: 6px; font-size: 14px; font-family: 'Segoe UI'; letter-spacing: 1.5px; transition: all 0.2s; }}
+            QPushButton#btn_ops:hover {{ background-color: {btn_ops_hover_bg}; color: {btn_ops_hover_text}; border: 1px solid #000000; }}
             
-            QPushButton#btn_ops {{ background-color: {bg_dark_tint}; border: 1px solid #000000; color: {text_color}; font-weight: bold; border-radius: 6px; font-size: 13px; font-family: 'Segoe UI'; letter-spacing: 1.5px; }}
-            QPushButton#btn_ops:hover {{ background-color: {accent}; color: #07080a; }}
-            
-            QPushButton#btn_config_menu {{ background-color: {bg_dark_tint}; border: 1px solid #000000; color: {text_color}; font-weight: bold; border-radius: 6px; font-size: 13px; font-family: 'Segoe UI'; letter-spacing: 0.5px; }}
-            QPushButton#btn_config_menu:hover {{ background-color: {hover_dark_tint}; border-color: {accent}; color: {accent}; }}
+            QPushButton#btn_config_menu {{ background-color: {btn_ops_bg}; border: 1px solid {accent}; color: {text_color}; font-weight: {font_weight}; border-radius: 6px; font-size: 14px; font-family: 'Segoe UI'; letter-spacing: 0.5px; transition: all 0.2s; }}
+            QPushButton#btn_config_menu:hover {{ background-color: {btn_ops_hover_bg}; color: {btn_ops_hover_text}; border: 1px solid #000000; }}
         """)
         
-        self.lbl_status.setStyleSheet(f"color: {text_color}; font-family: 'Segoe UI'; font-weight: bold; font-size: 12px; margin: 0px; padding: 0px;")
         self.update_save_tabs_button_visual()
         self.sync_all_whatsapp_themes()
 
     def update_save_tabs_button_visual(self):
         accent = self.accent_color
         c_accent = QColor(accent)
-        card_text_color = "#07080a" if c_accent.lightness() > 140 else "#ffffff"
+        has_wp = hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path)
         
+        if has_wp:
+            btn_bg_off = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.5)"
+            text_col = "#111111" if getattr(self, 'is_wp_light', False) else "#f5f5f5"
+        else:
+            btn_bg_off = "#161b24"
+            text_col = "#8a909d"
+            
         if self.save_tabs_enabled:
             self.btn_save_session.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {accent};
-                    border: 1px solid #000000;
-                    color: {card_text_color};
-                    font-family: 'Segoe UI';
-                    font-weight: bold;
-                    border-radius: 4px;
-                    margin: 0px;
-                }}
+                QPushButton {{ background-color: {accent}; border: 1px solid #000000; color: #07080a; font-family: 'Segoe UI'; font-weight: bold; border-radius: 4px; margin: 0px; }}
             """)
             self.lbl_status.setText("Save abas ativado.")
         else:
-            self.btn_save_session.setStyleSheet("""
-                QPushButton {{
-                    background-color: #161b24;
-                    border: 1px solid #232a38;
-                    color: #8a909d;
-                    font-family: 'Segoe UI';
-                    font-weight: bold;
-                    border-radius: 4px;
-                    margin: 0px;
-                }}
-                QPushButton:hover {{
-                    border-color: #45a29e;
-                    color: #fff;
-                }}
+            self.btn_save_session.setStyleSheet(f"""
+                QPushButton {{ background-color: {btn_bg_off}; border: 1px solid rgba(0,0,0,0.5); color: {text_col}; font-family: 'Segoe UI'; font-weight: 600; border-radius: 4px; margin: 0px; }}
+                QPushButton:hover {{ background-color: {accent}; border-color: #000000; color: #07080a; }}
             """)
             self.lbl_status.setText("")
 
@@ -914,213 +1443,103 @@ class StandaloneHub(QMainWindow):
             self.btn_prev_page.setEnabled(self.current_page > 0)
             self.page_label.setText(f"Página {self.current_page + 1}")
 
-    def create_home_tab(self):
-        if hasattr(self, 'home_widget') and self.home_widget:
-            self.tabs.removeTab(0)
-            self.home_widget.deleteLater()
-
-        self.home_widget = QWidget()
-        self.home_widget.setObjectName("HomeTab")
-        
-        if self.background_image_path and os.path.exists(self.background_image_path):
-            self.apply_background_image()
-        else:
-            self.home_widget.setStyleSheet(f"background-color: {self.theme_base_color};")
-
-        home_vertical_layout = QVBoxLayout(self.home_widget)
-        home_vertical_layout.setContentsMargins(0, 0, 0, 0)
-        home_vertical_layout.setSpacing(0)
-        
-        self.fav_area = QWidget()
-        self.fav_area_layout = QVBoxLayout(self.fav_area)
-        self.fav_area_layout.setContentsMargins(0,0,0,0)
-        self.fav_area_layout.setSpacing(0)
-        self.fav_area_layout.addWidget(self.fav_placeholder)
-        home_vertical_layout.addWidget(self.fav_area)
-        
-        content_container = QWidget()
-        content_layout = QVBoxLayout(content_container)
-        
-        content_layout.setContentsMargins(40, 20, 40, 25)
-        
-        control_panel_layout = QVBoxLayout()
-        control_panel_layout.setSpacing(10)
-        
-        btn_ops = QPushButton("STANDALONE HUB")
-        btn_ops.setObjectName("btn_ops")
-        btn_ops.setFixedSize(450, 42)
-        btn_ops.clicked.connect(self.show_about_dialog)
-        
-        btn_config_menu = QPushButton("CONFIGURAÇÕES  ⚙")
-        btn_config_menu.setObjectName("btn_config_menu")
-        btn_config_menu.setFixedSize(450, 42)
-        btn_config_menu.clicked.connect(self.open_settings_dialog)
-        
-        self.search_bar = QLineEdit()
-        self.search_bar.setFixedSize(450, 42)
-        self.search_bar.setPlaceholderText("Digite aqui o botão que deseja acessar...")
-        
-        self.search_bar.blockSignals(True)
-        self.search_bar.setText(self.search_filter)
-        self.search_bar.blockSignals(False)
-        self.search_bar.textChanged.connect(self.filter_buttons_by_search)
-        
-        c_theme = QColor(self.theme_base_color)
-        is_light = c_theme.lightness() > 128
-        input_bg = "rgba(255, 255, 255, 0.1)" if not is_light else "rgba(0, 0, 0, 0.05)"
-        input_text = "#ffffff" if not is_light else "#07080a"
-        
-        self.search_bar.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {input_bg};
-                border: 1px solid rgba(0, 0, 0, 0.6);
-                border-radius: 6px;
-                color: {input_text};
-                font-family: 'Segoe UI';
-                font-size: 13px;
-                font-weight: 600;
-                padding-left: 15px;
-                padding-right: 15px;
-            }}
-            QLineEdit:focus {{
-                border: 1px solid {self.accent_color};
-            }}
-        """)
-        
-        control_panel_layout.addWidget(btn_ops, alignment=Qt.AlignmentFlag.AlignCenter)
-        control_panel_layout.addWidget(btn_config_menu, alignment=Qt.AlignmentFlag.AlignCenter)
-        control_panel_layout.addWidget(self.search_bar, alignment=Qt.AlignmentFlag.AlignCenter)
-        content_layout.addLayout(control_panel_layout)
-        
-        content_layout.addSpacing(20)
-
-        self.grid_container_widget = QWidget()
-        self.grid_container_widget.setFixedHeight(340)
-        self.grid_container_layout = QVBoxLayout(self.grid_container_widget)
-        self.grid_container_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.addWidget(self.grid_container_widget)
-        
-        content_layout.addStretch()
-
-        nav_layout = QHBoxLayout()
-        nav_layout.addStretch()
+    def open_theme_mode_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Modo de Tema")
+        dialog.setFixedWidth(350)
+        dialog.setWindowOpacity(0.92)
         
         accent = self.accent_color
         c_accent = QColor(accent)
-        card_text_color = "#07080a" if c_accent.lightness() > 140 else "#ffffff"
+        text_color = "#07080a" if c_accent.lightness() > 140 else "#ffffff"
         hover_dark_tint = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40)"
         
-        nav_style = f"""
-            QPushButton {{
-                background-color: {accent};
-                border: 1px solid #000000;
-                color: {card_text_color};
-                font-weight: bold;
-                font-size: 15px;
-                border-radius: 5px;
-            }}
-            QPushButton:hover {{
-                background-color: {hover_dark_tint};
-                color: {accent};
-                border-color: {accent};
-            }}
-            QPushButton:disabled {{
-                border: 1px solid rgba(0,0,0,0.1);
-                color: rgba(120, 120, 120, 0.5);
-                background-color: rgba(0, 0, 0, 0.15);
-            }}
-        """
+        dialog.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {accent}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 14px; font-weight: bold; }}
+            QPushButton {{ background-color: {accent}; color: {text_color}; font-family: 'Segoe UI'; font-weight: 600; padding: 12px; border-radius: 6px; font-size: 13px; border: 1px solid #000000; text-align: left; padding-left: 20px; }}
+            QPushButton:hover {{ background-color: {hover_dark_tint}; border-color: {accent}; color: {accent}; }}
+        """)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 25, 20, 25)
+        layout.setSpacing(15)
         
-        self.btn_prev_page = QPushButton("<")
-        self.btn_prev_page.setFixedSize(50, 40)
-        self.btn_prev_page.setStyleSheet(nav_style)
-        self.btn_prev_page.clicked.connect(self.prev_page)
+        lbl = QLabel("Escolha a luminosidade da interface:")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
         
-        label_color = "#07080a" if QColor(self.theme_base_color).lightness() > 128 else "#ffffff"
-        self.page_label = QLabel(f"Página {self.current_page + 1}")
-        self.page_label.setStyleSheet(f"color: {label_color}; font-weight: bold; font-size: 13px; font-family: 'Segoe UI';")
+        btn_escuro = QPushButton("🌙  Modo Escuro (Fundo Preto)")
+        btn_claro = QPushButton("☀️  Modo Claro (Fundo Branco)")
         
-        self.btn_next_page = QPushButton(">")
-        self.btn_next_page.setFixedSize(50, 40)
-        self.btn_next_page.setStyleSheet(nav_style)
-        self.btn_next_page.clicked.connect(self.next_page)
+        def set_mode(mode):
+            self.theme_mode = mode
+            self.apply_styles()
+            self.create_home_tab()
+            self.save_settings(force=True)
+            dialog.accept()
+            
+        btn_escuro.clicked.connect(lambda: set_mode("Escuro"))
+        btn_claro.clicked.connect(lambda: set_mode("Claro"))
         
-        nav_layout.addWidget(self.btn_prev_page)
-        nav_layout.addWidget(self.page_label)
-        nav_layout.addWidget(self.btn_next_page)
-        nav_layout.addStretch()
-        content_layout.addLayout(nav_layout)
-        
-        home_vertical_layout.addWidget(content_container)
-
-        self.tabs.insertTab(0, self.home_widget, "Home")
-        
-        self.grid_layout = QGridLayout()
-        self.grid_layout.setSpacing(25)
-        
-        grid_container_hbox = QHBoxLayout()
-        grid_container_hbox.addStretch()
-        grid_container_hbox.addLayout(self.grid_layout)
-        grid_container_hbox.addStretch()
-        
-        self.grid_container_layout.addLayout(grid_container_hbox)
-        
-        self.filter_buttons_by_search(self.search_filter)
-        
-        if self.search_filter:
-            self.search_bar.setFocus()
-            self.search_bar.setSelection(len(self.search_filter), 0)
-
-    def prev_page(self):
-        if self.current_page > 0:
-            self.current_page -= 1
-            self.filter_buttons_by_search(self.search_filter)
-
-    def next_page(self):
-        filtered_list = self.buttons_list
-        if self.search_filter:
-            filtered_list = [b for b in self.buttons_list if self.search_filter.strip().lower() in b["label"].lower()]
-        max_pages = max(0, (len(filtered_list) - 1) // self.items_per_page)
-        if self.current_page < max_pages:
-            self.current_page += 1
-            self.filter_buttons_by_search(self.search_filter)
+        layout.addWidget(btn_escuro)
+        layout.addWidget(btn_claro)
+        dialog.exec()
 
     def open_settings_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("CONFIGURAÇÕES DO SISTEMA")
         dialog.setFixedWidth(380)
-        dialog.setStyleSheet("""
-            QDialog { background-color: #11141a; border: 1px solid #1c212d; }
-            QLabel { color: #a0a5b5; font-family: 'Segoe UI'; font-size: 13px; }
-            QCheckBox { color: #ffffff; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; padding: 5px; }
-            QCheckBox::indicator { width: 18px; height: 18px; }
-            QPushButton { background-color: #161b24; border: 1px solid #232a38; color: #ffffff; font-family: 'Segoe UI'; font-weight: 600; padding: 12px; border-radius: 6px; font-size: 13px; text-align: left; padding-left: 15px; }
-            QPushButton:hover { background-color: #1f2633; border-color: #45a29e; }
-            QPushButton#btn_danger { color: #ff5252; border-color: #3d1c1c; }
-            QPushButton#btn_danger:hover { background-color: #2b1313; border-color: #ff5252; }
+        dialog.setWindowOpacity(0.92)
+        
+        accent = self.accent_color
+        c_accent = QColor(accent)
+        text_color = "#07080a" if c_accent.lightness() > 140 else "#ffffff"
+        hover_dark_tint = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40)"
+
+        dialog.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {accent}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 14px; font-weight: bold; }}
+            QCheckBox {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; padding: 5px; }}
+            QCheckBox::indicator {{ width: 18px; height: 18px; }}
+            QPushButton {{ 
+                background-color: {accent}; color: {text_color}; font-family: 'Segoe UI'; font-weight: 600; padding: 10px; border-radius: 6px; font-size: 13px; text-align: left; padding-left: 15px; border: 1px solid #000000;
+            }}
+            QPushButton:hover {{ background-color: {hover_dark_tint}; border-color: {accent}; color: {accent}; }}
+            QPushButton#btn_danger {{ background-color: #ff5252; color: #ffffff; border: 1px solid #000000; }}
+            QPushButton#btn_danger:hover {{ background-color: #3d1c1c; color: #ff5252; border-color: #ff5252; }}
         """)
         
         layout = QVBoxLayout(dialog)
         layout.setSpacing(10)
         layout.setContentsMargins(20, 25, 20, 25)
         
-        chk_auto_save = QCheckBox("Salvar automaticamente (Customização)")
+        chk_auto_save = QCheckBox("Salvar automaticamente")
         chk_auto_save.setChecked(self.auto_save)
         chk_auto_save.stateChanged.connect(self.toggle_auto_save_from_checkbox)
         
-        btn_toolbox = QPushButton("＋  Configurar Toolbox (Adicionar Botão)")
+        if self.security_settings.get("enabled", False):
+            btn_security = QPushButton("🔓  Alterar ou Remover Senha")
+            btn_security.clicked.connect(lambda: [dialog.accept(), self.open_security_modify()])
+        else:
+            btn_security = QPushButton("🔒  Definir Senha de Acesso")
+            btn_security.clicked.connect(lambda: [dialog.accept(), self.open_security_setup()])
+
+        btn_mode = QPushButton("🌗  Modo Escuro / Claro (Base)")
+        btn_mode.clicked.connect(lambda: [dialog.accept(), self.open_theme_mode_dialog()])
+        
+        btn_toolbox = QPushButton("＋  Adicionar Botão")
         btn_toolbox.clicked.connect(lambda: [dialog.accept(), self.open_toolbox_dialog()])
         
-        btn_delete_toolbox = QPushButton("🗙  Deletar Toolbox (Remover Botão)")
+        btn_delete_toolbox = QPushButton("🗙  Deletar Botão")
         btn_delete_toolbox.clicked.connect(lambda: [dialog.accept(), self.open_delete_toolbox_dialog()])
         
-        btn_presets = QPushButton("🎨  Temas Pré-definidos (Paletas)")
+        btn_presets = QPushButton("🎨  Temas Pré-definidos")
         btn_presets.clicked.connect(lambda: [dialog.accept(), self.open_presets_dialog()])
         
-        btn_color = QPushButton("🎨  Alterar Cor de Destaque (Cards e Detalhes)")
+        btn_color = QPushButton("🎨  Alterar Cor de Destaque")
         btn_color.clicked.connect(lambda: [dialog.accept(), self.open_color_picker()])
         
-        btn_theme = QPushButton("🎭  Alterar Tema (Claro / Escuro Geral)")
+        btn_theme = QPushButton("🎭  Alterar Cor do Fundo")
         btn_theme.clicked.connect(lambda: [dialog.accept(), self.open_theme_picker()])
         
         btn_bg_image = QPushButton("🖼️  Imagem de Fundo (Wallpaper)")
@@ -1128,6 +1547,8 @@ class StandaloneHub(QMainWindow):
         
         layout.addWidget(chk_auto_save)
         layout.addSpacing(10)
+        layout.addWidget(btn_security)
+        layout.addWidget(btn_mode)
         layout.addWidget(btn_toolbox)
         layout.addWidget(btn_delete_toolbox)
         layout.addWidget(btn_presets)
@@ -1139,27 +1560,37 @@ class StandaloneHub(QMainWindow):
         btn_save_man.clicked.connect(lambda: [self.save_settings(force=True), dialog.accept()])
         layout.addWidget(btn_save_man)
         
-        btn_reset = QPushButton("🔄  Restaurar Configurações Iniciais (Reset)")
+        btn_reset = QPushButton("🔄  Restaurar Padrões de Fábrica")
         btn_reset.setObjectName("btn_danger")
         btn_reset.clicked.connect(lambda: [self.reset_to_defaults(), dialog.accept()])
         layout.addWidget(btn_reset)
         
         dialog.exec()
 
+    def open_security_setup(self):
+        dialog = SecuritySetupDialog(self, self.security_settings)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.security_settings = dialog.final_data
+            self.save_settings(force=True)
+
+    def open_security_modify(self):
+        dialog = SecurityModifyDialog(self)
+        dialog.exec()
+
     def open_presets_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Selecionar Tema Pré-definido")
         dialog.setFixedWidth(380)
-        dialog.setStyleSheet("""
-            QDialog { background-color: #11141a; }
-            QLabel { color: #a0a5b5; font-family: 'Segoe UI'; font-size: 13px; }
-            QComboBox { background-color: #161b24; border: 1px solid #232a38; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; font-size: 13px; }
-            QPushButton { font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; text-align: center; }
+        dialog.setWindowOpacity(0.92)
+        dialog.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {self.accent_color}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; }}
+            QComboBox {{ background-color: #161b24; border: 1px solid {self.accent_color}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; font-size: 13px; }}
+            QPushButton {{ background-color: {self.accent_color}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
         """)
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
-        
         layout.addWidget(QLabel("Escolha uma das 10 paletas prontas abaixo:"))
         combo = QComboBox()
         combo.addItems(list(self.presets.keys()))
@@ -1167,9 +1598,8 @@ class StandaloneHub(QMainWindow):
         
         btn_box = QHBoxLayout()
         btn_apply = QPushButton("Aplicar Tema")
-        btn_apply.setStyleSheet(f"background-color: {self.accent_color}; color: #07080a;")
         btn_back = QPushButton("Cancelar")
-        btn_back.setStyleSheet("background-color: #161b24; border: 1px solid #232a38; color: #fff;")
+        btn_back.setStyleSheet("background-color: #161b24; color: #fff;")
         
         btn_apply.clicked.connect(lambda: self.apply_preset_theme(combo.currentText(), dialog))
         btn_back.clicked.connect(dialog.reject)
@@ -1208,18 +1638,22 @@ class StandaloneHub(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("Configurar Imagem de Fundo")
         dialog.setFixedWidth(360)
-        dialog.setStyleSheet("background-color: #11141a; color: #fff;")
+        dialog.setWindowOpacity(0.92)
+        dialog.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {self.accent_color}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-weight: bold; font-family: 'Segoe UI'; font-size: 13px; }}
+            QPushButton {{ background-color: {self.accent_color}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
+        """)
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
         
         layout.addWidget(QLabel("Personalize o fundo do seu Standalone Hub:"))
         btn_add = QPushButton("Adicionar Imagem")
-        btn_add.setStyleSheet("background-color: #161b24; color: white; padding: 10px; border-radius: 6px;")
         btn_add.clicked.connect(lambda: self.select_background_image(dialog))
         
         btn_del = QPushButton("Excluir Imagem")
-        btn_del.setStyleSheet("background-color: #ff5252; color: white; padding: 10px; border-radius: 6px;")
+        btn_del.setStyleSheet("background-color: #ff5252; color: white;")
         btn_del.clicked.connect(lambda: self.remove_background_image(dialog))
         
         layout.addWidget(btn_add)
@@ -1230,27 +1664,30 @@ class StandaloneHub(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "Selecionar Imagem de Fundo", "", "Imagens (*.png *.jpg *.jpeg *.bmp)")
         if file_path:
             self.background_image_path = file_path
-            self.apply_background_image()
-            self.save_settings()
+            self.update_wallpaper_brightness()
+            self.save_settings(force=True)
+            self.apply_styles()
+            self.create_home_tab()
             dialog.accept()
 
     def remove_background_image(self, dialog):
         self.background_image_path = ""
-        self.home_widget.setAutoFillBackground(False)
+        self.is_wp_light = False
+        self.save_settings(force=True)
+        self.apply_styles()
         self.create_home_tab()
-        self.save_settings()
         dialog.accept()
 
     def open_toolbox_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Adicionar ao Toolbox")
         dialog.setFixedWidth(420)
+        dialog.setWindowOpacity(0.92)
         dialog.setStyleSheet(f"""
-            QDialog {{ background-color: #11141a; border: 1px solid #1c212d; }}
-            QLabel {{ color: #a0a5b5; font-family: 'Segoe UI'; font-size: 12px; font-weight: bold; }}
-            QLineEdit {{ background-color: #161b24; border: 1px solid #232a38; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; }}
-            QLineEdit:focus {{ border: 1px solid {self.accent_color}; }}
-            QPushButton {{ font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
+            QDialog {{ background-color: #11141a; border: 1px solid {self.accent_color}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 12px; font-weight: bold; }}
+            QLineEdit {{ background-color: #161b24; border: 1px solid {self.accent_color}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; }}
+            QPushButton {{ background-color: {self.accent_color}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
         """)
         form_layout = QFormLayout(dialog)
         form_layout.setContentsMargins(20, 20, 20, 20)
@@ -1261,7 +1698,6 @@ class StandaloneHub(QMainWindow):
         input_url = QLineEdit()
         
         btn_img = QPushButton("🖼️ Adicionar Imagem (Opcional)")
-        btn_img.setStyleSheet("background-color: #161b24; border: 1px solid #232a38; color: #fff; text-align: center;")
         selected_img = [""]
         
         def pick_img():
@@ -1269,10 +1705,8 @@ class StandaloneHub(QMainWindow):
             if path:
                 selected_img[0] = path
                 btn_img.setText("Imagem Selecionada!")
-                btn_img.setStyleSheet(f"background-color: {self.accent_color}; color: #000; font-weight: bold; border: none;")
                 
         btn_img.clicked.connect(pick_img)
-        
         form_layout.addRow(QLabel("Nome do Botão:"), input_name)
         form_layout.addRow(QLabel("Subtítulo:"), input_sub)
         form_layout.addRow(QLabel("URL do Site:"), input_url)
@@ -1280,9 +1714,8 @@ class StandaloneHub(QMainWindow):
         
         btn_box = QHBoxLayout()
         btn_save = QPushButton("Adicionar")
-        btn_save.setStyleSheet(f"background-color: {self.accent_color}; color: #07080a; text-align: center; padding-left: 0;")
         btn_back = QPushButton("Cancelar")
-        btn_back.setStyleSheet("background-color: #161b24; border: 1px solid #232a38; color: #fff; text-align: center; padding-left: 0;")
+        btn_back.setStyleSheet("background-color: #161b24; color: #fff;")
         
         btn_save.clicked.connect(lambda: self.add_toolbox_item(input_name.text(), input_sub.text(), input_url.text(), selected_img[0], dialog))
         btn_back.clicked.connect(dialog.reject)
@@ -1293,8 +1726,7 @@ class StandaloneHub(QMainWindow):
 
     def add_toolbox_item(self, name, sub, url, img_path, dialog):
         if name.strip() and url.strip():
-            if img_path:
-                self.process_and_save_icon(img_path, name)
+            if img_path: self.process_and_save_icon(img_path, name)
             self.buttons_list.append({"label": name, "subtitle": sub, "url": url, "favorite": False})
             self.save_settings()
             self.filter_buttons_by_search(self.search_filter)
@@ -1304,27 +1736,26 @@ class StandaloneHub(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("Remover Botão do Toolbox")
         dialog.setFixedWidth(400)
-        dialog.setStyleSheet("""
-            QDialog { background-color: #11141a; }
-            QLabel { color: #a0a5b5; font-family: 'Segoe UI'; font-size: 13px; }
-            QComboBox { background-color: #161b24; border: 1px solid #232a38; border-radius: 6px; color: #fff; padding: 8px; font-family: 'Segoe UI'; }
-            QPushButton { font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; text-align: center; padding-left: 0; }
+        dialog.setWindowOpacity(0.92)
+        dialog.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {self.accent_color}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; }}
+            QComboBox {{ background-color: #161b24; border: 1px solid {self.accent_color}; border-radius: 6px; color: #fff; padding: 8px; font-family: 'Segoe UI'; }}
+            QPushButton {{ background-color: {self.accent_color}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; text-align: center; }}
         """)
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
-        
         layout.addWidget(QLabel("Selecione o botão que deseja excluir definitivamente:"))
         combo = QComboBox()
-        for item in self.buttons_list:
-            combo.addItem(item["label"])
+        for item in self.buttons_list: combo.addItem(item["label"])
         layout.addWidget(combo)
         
         btn_box = QHBoxLayout()
         btn_del = QPushButton("Deletar e Salvar")
         btn_del.setStyleSheet("background-color: #ff5252; color: #fff;")
         btn_back = QPushButton("Voltar")
-        btn_back.setStyleSheet("background-color: #161b24; border: 1px solid #232a38; color: #fff;")
+        btn_back.setStyleSheet("background-color: #161b24; color: #fff;")
         
         btn_del.clicked.connect(lambda: self.delete_toolbox_item(combo.currentText(), dialog))
         btn_back.clicked.connect(dialog.reject)
@@ -1342,33 +1773,30 @@ class StandaloneHub(QMainWindow):
                 try: os.remove(icon_path)
                 except: pass
         max_pages = max(0, (len(self.buttons_list) - 1) // self.items_per_page)
-        if self.current_page > max_pages:
-            self.current_page = max_pages
+        if self.current_page > max_pages: self.current_page = max_pages
         self.save_settings(force=True)  
         self.filter_buttons_by_search(self.search_filter)
         self.update_favorites_panel()
         dialog.accept()
 
     def save_settings(self, force=False):
-        if self.is_restoring:
-            return
-        if not self.auto_save and not force:
-            return
+        if self.is_restoring: return
+        if not self.auto_save and not force: return
         self.track_zoom_levels()
-
         os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
         data = {
             "auto_save": self.auto_save,
             "save_tabs_enabled": self.save_tabs_enabled,
+            "theme_mode": getattr(self, 'theme_mode', 'Escuro'),
             "accent_color": self.accent_color,
             "theme_base_color": self.theme_base_color,
             "background_image_path": self.background_image_path,
             "buttons": self.buttons_list,
             "opened_tabs": self.opened_tabs_urls if self.save_tabs_enabled else [],
-            "zoom_settings": self.zoom_settings
+            "zoom_settings": self.zoom_settings,
+            "security": self.security_settings
         }
-        with open(self.config_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
+        with open(self.config_file, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
 
     def load_settings(self):
         if os.path.exists(self.config_file):
@@ -1377,39 +1805,41 @@ class StandaloneHub(QMainWindow):
                     data = json.load(f)
                     self.auto_save = data.get("auto_save", False)
                     self.save_tabs_enabled = data.get("save_tabs_enabled", False)
+                    self.theme_mode = data.get("theme_mode", "Escuro")
                     self.accent_color = data.get("accent_color", "#d9d9d9")
                     self.theme_base_color = data.get("theme_base_color", "#242120")
                     self.background_image_path = data.get("background_image_path", "")
                     self.buttons_list = data.get("buttons", self.default_buttons.copy())
-                    
                     for b in self.buttons_list:
-                        if "favorite" not in b:
-                            b["favorite"] = False
-                            
+                        if "favorite" not in b: b["favorite"] = False
                     self.opened_tabs_urls = data.get("opened_tabs", [])
                     self.zoom_settings = data.get("zoom_settings", {})
+                    self.security_settings = data.get("security", {})
+                    self.update_wallpaper_brightness()
                     return
-            except Exception:
-                pass
+            except: pass
+        self.theme_mode = "Escuro"
         self.buttons_list = self.default_buttons.copy()
         self.zoom_settings = {}
+        self.security_settings = {}
+        self.update_wallpaper_brightness()
 
     def reset_to_defaults(self):
         self.buttons_list = self.default_buttons.copy()
         self.accent_color = self.presets["Padrão (preto/branco)"]["accent"]
         self.theme_base_color = self.presets["Padrão (preto/branco)"]["theme"]
+        self.theme_mode = "Escuro"
         self.background_image_path = ""
+        self.is_wp_light = False
         self.current_page = 0
         self.auto_save = False
         self.save_tabs_enabled = False
         self.opened_tabs_urls = []
         self.zoom_settings = {}
-        if os.path.exists(self.config_file):
-            os.remove(self.config_file)
-        self.home_widget.setAutoFillBackground(False)
+        self.security_settings = {}
+        if os.path.exists(self.config_file): os.remove(self.config_file)
         self.apply_styles()
         self.create_home_tab()
-        self.update_favorites_panel()
 
     def open_web_tab(self, url, title):
         self.search_filter = ""
@@ -1425,13 +1855,10 @@ class StandaloneHub(QMainWindow):
         browser.setUrl(QUrl(url))
         
         browser.titleChanged.connect(lambda t, b=browser: self.on_title_changed(b, t))
-        
         browser.page().zoomFactorChanged.connect(lambda factor, b=browser: self.on_zoom_changed(b, factor))
         browser.loadFinished.connect(lambda ok, b=browser: self.apply_whatsapp_theme_on_load(b))
-        browser.page().permissionRequested.connect(self.handle_permission_request)
         
-        if url in self.zoom_settings:
-            browser.setZoomFactor(self.zoom_settings[url])
+        if url in self.zoom_settings: browser.setZoomFactor(self.zoom_settings[url])
             
         index = self.tabs.addTab(browser, title)
         self.tabs.setCurrentIndex(index)
@@ -1443,8 +1870,7 @@ class StandaloneHub(QMainWindow):
     def on_title_changed(self, browser, title):
         index = self.tabs.indexOf(browser)
         if index != -1:
-            if not title.strip():
-                title = "Navegação"
+            if not title.strip(): title = "Navegação"
             short_title = title[:20] + "..." if len(title) > 20 else title
             self.tabs.setTabText(index, short_title)
             if self.save_tabs_enabled and not self.is_restoring:
@@ -1454,7 +1880,7 @@ class StandaloneHub(QMainWindow):
     def apply_whatsapp_theme_on_load(self, browser):
         url = browser.url().toString()
         if "whatsapp.com" in url:
-            c_theme = QColor(self.theme_base_color)
+            c_theme = QColor(self.get_active_theme_color())
             is_light = c_theme.lightness() > 128
             js_script = f"""
             (function() {{
@@ -1475,43 +1901,35 @@ class StandaloneHub(QMainWindow):
     def sync_all_whatsapp_themes(self):
         for i in range(1, self.tabs.count()):
             widget = self.tabs.widget(i)
-            if isinstance(widget, QWebEngineView):
-                self.apply_whatsapp_theme_on_load(widget)
+            if isinstance(widget, QWebEngineView): self.apply_whatsapp_theme_on_load(widget)
 
     def on_zoom_changed(self, browser, factor):
         try:
             url = browser.property("original_url") or browser.url().toString()
             if url and url != "about:blank":
                 self.zoom_settings[url] = factor
-                if self.save_tabs_enabled:
-                    self.save_settings(force=True)
-        except RuntimeError:
-            pass
+                if self.save_tabs_enabled: self.save_settings(force=True)
+        except RuntimeError: pass
 
     def track_zoom_levels(self):
         for i in range(1, self.tabs.count()):
             widget = self.tabs.widget(i)
             if isinstance(widget, QWebEngineView):
                 url = widget.property("original_url") or widget.url().toString()
-                if url and url != "about:blank":
-                    self.zoom_settings[url] = widget.zoomFactor()
+                if url and url != "about:blank": self.zoom_settings[url] = widget.zoomFactor()
 
     def close_tab(self, index):
         if index != 0:
             if self.save_tabs_enabled and not self.is_restoring:
                 tab_title = self.tabs.tabText(index)
                 self.opened_tabs_urls = [t for t in self.opened_tabs_urls if t["label"] != tab_title]
-                
             widget = self.tabs.widget(index)
-            if widget:
-                widget.deleteLater()
+            if widget: widget.deleteLater()
             self.tabs.removeTab(index)
-            if self.save_tabs_enabled and not self.is_restoring:
-                self.save_settings(force=True)
+            if self.save_tabs_enabled and not self.is_restoring: self.save_settings(force=True)
 
     def track_tabs_after_move(self):
-        if not self.save_tabs_enabled or self.is_restoring:
-            return
+        if not self.save_tabs_enabled or self.is_restoring: return
         urls = []
         for i in range(1, self.tabs.count()):
             widget = self.tabs.widget(i)
@@ -1534,8 +1952,7 @@ class StandaloneHub(QMainWindow):
         if self.save_tabs_enabled and self.opened_tabs_urls:
             self.is_restoring = True
             tabs_to_open = list(self.opened_tabs_urls)
-            for t in tabs_to_open:
-                self.open_web_tab(t["url"], t["label"])
+            for t in tabs_to_open: self.open_web_tab(t["url"], t["label"])
             QTimer.singleShot(200, self.release_restore_lock)
 
     def release_restore_lock(self):
@@ -1545,5 +1962,4 @@ class StandaloneHub(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = StandaloneHub()
-    window.showMaximized()
     sys.exit(app.exec())
