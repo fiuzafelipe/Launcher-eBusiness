@@ -2,18 +2,20 @@ import os
 import sys
 import json
 import gc
+import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QSpacerItem, QSizePolicy, QDialog, 
                              QLineEdit, QLabel, QCheckBox, QFormLayout, QComboBox,
-                             QFileDialog, QColorDialog, QMessageBox, QScrollArea, QMenu)
+                             QFileDialog, QColorDialog, QMessageBox, QScrollArea, QMenu, QGraphicsBlurEffect)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import (QWebEngineProfile, QWebEnginePage, QWebEngineSettings, 
-                                   QWebEngineScript, QWebEnginePermission, QWebEngineDownloadRequest)
+                                   QWebEnginePermission, QWebEngineDownloadRequest)
 from PyQt6.QtCore import QUrl, Qt, QPoint, QTimer, QRect, QEvent
 from PyQt6.QtGui import QIcon, QColor, QImage, QShortcut, QKeySequence, QCursor
 
+# Importações dos módulos customizados
 from ui.components import (SecuritySetupDialog, SecurityModifyDialog, SecurityChangePasswordDialog, 
-                           HistoryDialog, DraggableToolButton, CustomTabWidget, GoogleLoginInterceptor)
+                           HistoryDialog, DraggableToolButton, CustomTabWidget, LockScreenWidget)
 from core.remote_tools import launch_remote_tool
 
 current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,9 +27,6 @@ class StandaloneHub(QMainWindow):
         self.resize(1280, 720)
         
         self.config_file = os.path.join(current_dir, "core", "config.json")
-        self.storage_path = os.path.join(current_dir, "core", "storage")
-        os.makedirs(self.storage_path, exist_ok=True)
-        
         self.icons_dir = os.path.join(os.path.dirname(current_dir), "assets", "icons")
         os.makedirs(self.icons_dir, exist_ok=True)
         
@@ -75,6 +74,11 @@ class StandaloneHub(QMainWindow):
 
         self.load_settings()
 
+        # O COFRE BLINDADO
+        app_data = os.getenv('LOCALAPPDATA')
+        self.storage_path = os.path.join(app_data, "FiuzaTechnology", "StandaloneHub", "BrowserSession")
+        os.makedirs(self.storage_path, exist_ok=True)
+
         self.profile = QWebEngineProfile("FiuzaProfile", self)
         self.profile.setPersistentStoragePath(self.storage_path)
         self.profile.setCachePath(self.storage_path)
@@ -90,27 +94,6 @@ class StandaloneHub(QMainWindow):
         settings.setAttribute(QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
         settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
-        
-        stealth_script = QWebEngineScript()
-        stealth_script.setSourceCode("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => false});
-            const getParameter = WebGLRenderingContext.prototype.getParameter;
-            WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                if (parameter === 37445) return 'Google Inc.';
-                if (parameter === 37446) return 'ANGLE (Intel, Intel(R) HD Graphics, OpenGL 4.5)';
-                return getParameter(parameter);
-            };
-        """)
-        stealth_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-        stealth_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
-        stealth_script.setRunsOnSubFrames(True)
-        self.profile.scripts().insert(stealth_script)
-        
-        global_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        self.profile.setHttpUserAgent(global_ua)
-        self.profile.setHttpAcceptLanguage("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
-        self.interceptor = GoogleLoginInterceptor()
-        self.profile.setUrlRequestInterceptor(self.interceptor)
 
         self.central_widget = QWidget()
         self.central_widget.setObjectName("CentralWidget")
@@ -178,7 +161,6 @@ class StandaloneHub(QMainWindow):
         self.bottom_bar.addWidget(self.btn_save_session)
         self.main_layout.addWidget(self.bottom_bar_widget)
         
-        self.create_favorites_panel_widget()
         self.create_home_tab()
         self.apply_styles()
         
@@ -202,7 +184,6 @@ class StandaloneHub(QMainWindow):
         self.showMaximized()
         
         if self.security_settings and self.security_settings.get("enabled", False):
-            from ui.components import LockScreenWidget
             self.show_lock_screen()
 
     def closeEvent(self, event):
@@ -212,7 +193,6 @@ class StandaloneHub(QMainWindow):
         event.accept()
 
     def show_lock_screen(self):
-        from ui.components import LockScreenWidget
         self.blur_effect = QGraphicsBlurEffect()
         self.blur_effect.setBlurRadius(20)
         self.centralWidget().setGraphicsEffect(self.blur_effect)
@@ -234,6 +214,7 @@ class StandaloneHub(QMainWindow):
             if self.security_settings.get("enabled", False):
                 lock_action = menu.addAction("🔒 Trancar Tela")
             action = menu.exec(self.mapToGlobal(event.pos()))
+            
             if action == history_action:
                 dialog = HistoryDialog(self)
                 dialog.exec()
@@ -294,7 +275,6 @@ class StandaloneHub(QMainWindow):
         self.is_wp_light = False
         if hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path):
             try:
-                from PyQt6.QtGui import QImage
                 img = QImage(self.background_image_path).scaled(50, 50, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
                 lum = sum((img.pixelColor(x, y).red() * 0.299 + img.pixelColor(x, y).green() * 0.587 + img.pixelColor(x, y).blue() * 0.114) for x in range(50) for y in range(50)) / 2500
                 self.is_wp_light = lum > 128
@@ -462,43 +442,6 @@ class StandaloneHub(QMainWindow):
             if not url.startswith("http://") and not url.startswith("https://"): url = "https://" + url
             self.open_web_tab(url, "Carregando...")
 
-    def create_favorites_panel_widget(self):
-        # A CAIXA BLINDADA GLOBAL DOS FAVORITOS
-        self.fav_container_fixed = QWidget()
-        self.fav_container_fixed.setFixedHeight(48)
-        self.fav_layout_inner = QVBoxLayout(self.fav_container_fixed)
-        self.fav_layout_inner.setContentsMargins(0, 0, 0, 0)
-        self.fav_layout_inner.setSpacing(0)
-        
-        self.fav_placeholder = QWidget()
-        self.fav_placeholder.setFixedHeight(48)
-        self.fav_placeholder.setStyleSheet("background: transparent;")
-        
-        self.fav_panel_widget = QWidget()
-        self.fav_panel_widget.setObjectName("FavPanelWidget")
-        self.fav_panel_widget.setFixedHeight(48)
-        self.fav_panel_layout = QVBoxLayout(self.fav_panel_widget)
-        self.fav_panel_layout.setContentsMargins(15, 5, 15, 5)
-        
-        self.fav_scroll = QScrollArea()
-        self.fav_scroll.setWidgetResizable(True)
-        self.fav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.fav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.fav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        
-        self.fav_container = QWidget()
-        self.fav_container.setStyleSheet("background: transparent;")
-        self.fav_hbox = QHBoxLayout(self.fav_container)
-        self.fav_hbox.setContentsMargins(0, 0, 0, 0)
-        self.fav_hbox.setSpacing(15)
-        
-        self.fav_scroll.setWidget(self.fav_container)
-        self.fav_panel_layout.addWidget(self.fav_scroll)
-        
-        self.fav_layout_inner.addWidget(self.fav_placeholder)
-        self.fav_layout_inner.addWidget(self.fav_panel_widget)
-        self.fav_panel_widget.setVisible(False)
-
     def update_favorites_panel(self, filter_text=""):
         if not hasattr(self, 'fav_hbox') or not self.fav_hbox: return
         while self.fav_hbox.count():
@@ -523,17 +466,18 @@ class StandaloneHub(QMainWindow):
 
     def show_fav_panel(self):
         if hasattr(self, 'fav_panel_widget') and not self.fav_panel_widget.isVisible():
-            self.fav_placeholder.setVisible(False)
+            if hasattr(self, 'fav_placeholder'): self.fav_placeholder.setVisible(False)
             self.fav_panel_widget.setVisible(True)
 
     def hide_fav_panel(self):
         if hasattr(self, 'fav_panel_widget') and self.fav_panel_widget.isVisible():
             if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible() and self.fav_search_bar.hasFocus(): return
             self.fav_panel_widget.setVisible(False)
-            self.fav_placeholder.setVisible(True)
+            if hasattr(self, 'fav_placeholder'): self.fav_placeholder.setVisible(True)
 
     def check_mouse_position_for_favorites(self):
-        if self.tabs.currentIndex() != 0:
+        if not hasattr(self, 'home_widget') or not self.home_widget: return
+        if self.tabs.currentIndex() != 0: 
             self.hide_fav_panel()
             return
             
@@ -549,7 +493,6 @@ class StandaloneHub(QMainWindow):
         global_cursor_pos = QCursor.pos()
         cursor_pos = self.mapFromGlobal(global_cursor_pos)
         
-        # A MÁGICA DOS 140 PIXELS
         if cursor_pos.y() >= 0 and cursor_pos.y() <= 140:
             self.show_fav_panel()
         else:
@@ -615,9 +558,42 @@ class StandaloneHub(QMainWindow):
         home_vertical_layout.setContentsMargins(0, 0, 0, 0)
         home_vertical_layout.setSpacing(0)
         
-        # A CAIXA BLINDADA DOS FAVORITOS QUE NÃO EMPURRA A TELA ERRADO
-        if hasattr(self, 'fav_container_fixed'):
-            home_vertical_layout.addWidget(self.fav_container_fixed)
+        self.fav_area = QWidget()
+        self.fav_area.setFixedHeight(48)
+        self.fav_area_layout = QVBoxLayout(self.fav_area)
+        self.fav_area_layout.setContentsMargins(0,0,0,0)
+        self.fav_area_layout.setSpacing(0)
+
+        self.fav_placeholder = QWidget()
+        self.fav_placeholder.setFixedHeight(48)
+        self.fav_placeholder.setStyleSheet("background: transparent;")
+        
+        self.fav_panel_widget = QWidget()
+        self.fav_panel_widget.setObjectName("FavPanelWidget")
+        self.fav_panel_widget.setFixedHeight(48)
+        self.fav_panel_widget.setVisible(False)
+        
+        self.fav_layout = QVBoxLayout(self.fav_panel_widget)
+        self.fav_layout.setContentsMargins(15, 5, 15, 5)
+        
+        self.fav_scroll = QScrollArea()
+        self.fav_scroll.setWidgetResizable(True)
+        self.fav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.fav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.fav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        
+        self.fav_container = QWidget()
+        self.fav_container.setStyleSheet("background: transparent;")
+        self.fav_hbox = QHBoxLayout(self.fav_container)
+        self.fav_hbox.setContentsMargins(0, 0, 0, 0)
+        self.fav_hbox.setSpacing(15)
+        
+        self.fav_scroll.setWidget(self.fav_container)
+        self.fav_layout.addWidget(self.fav_scroll)
+
+        self.fav_area_layout.addWidget(self.fav_placeholder)
+        self.fav_area_layout.addWidget(self.fav_panel_widget)
+        home_vertical_layout.addWidget(self.fav_area)
         
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -733,7 +709,6 @@ class StandaloneHub(QMainWindow):
         home_vertical_layout.addWidget(scroll_area)
 
         self.tabs.insertTab(0, self.home_widget, "Home")
-        
         self.update_favorites_panel()
         self.filter_buttons_by_search(self.search_filter)
         
@@ -1447,8 +1422,3 @@ class StandaloneHub(QMainWindow):
     def release_restore_lock(self):
         self.is_restoring = False
         self.tabs.setCurrentIndex(0)
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = StandaloneHub()
-    sys.exit(app.exec())

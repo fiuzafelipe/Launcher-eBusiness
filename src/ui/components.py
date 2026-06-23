@@ -5,7 +5,7 @@ import string
 import datetime
 import calendar
 from PyQt6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, 
+from PyQt6.QtWidgets import (QApplication, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, 
                              QPushButton, QLineEdit, QLabel, QFileDialog, 
                              QMessageBox, QFrame, QGridLayout, QMenu, QComboBox, QScrollArea, QWidget)
 from PyQt6.QtCore import Qt, QMimeData
@@ -610,7 +610,144 @@ class CustomTabWidget(QTabWidget):
 class GoogleLoginInterceptor(QWebEngineUrlRequestInterceptor):
     def interceptRequest(self, info):
         url = info.requestUrl().toString()
-        if "accounts.google.com" in url or "youtube.com" in url or "myaccount.google.com" in url:
-            # Camuflagem para o Google não bloquear o Login
+        # O PULO DO GATO: Camuflagem ATIVA APENAS na tela de login!
+        # Deixamos o youtube.com passar com o Chrome original para não dar conflito no motor V8.
+        if "accounts.google.com" in url or "myaccount.google.com" in url:
             firefox_ua = b"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0"
             info.setHttpHeader(b"User-Agent", firefox_ua)
+
+class LockScreenWidget(QWidget):
+    def __init__(self, parent, security_data):
+        super().__init__(parent)
+        self.hub = parent
+        self.security_data = security_data
+        self.attempts = 0
+        self.setup_ui()
+
+    def setup_ui(self):
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.panel_container = QWidget(self)
+        self.panel_layout = QVBoxLayout(self.panel_container)
+        self.panel_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.panel = QFrame()
+        self.panel.setFixedSize(450, 480)
+        self.panel.setStyleSheet(f"""
+            QFrame {{ background-color: rgba(17, 20, 26, 0.85); border: 2px solid {self.hub.accent_color}; border-radius: 20px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; border: none; background: transparent; }}
+            QLineEdit {{ background-color: rgba(0, 0, 0, 0.5); border: 1px solid {self.hub.accent_color}; border-radius: 8px; color: #fff; padding: 12px; font-family: 'Segoe UI'; font-size: 15px; font-weight: bold; text-transform: uppercase; }}
+            QPushButton {{ background-color: {self.hub.accent_color}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 12px; border-radius: 8px; font-size: 14px; }}
+            QPushButton:hover {{ background-color: #ffffff; }}
+        """)
+        
+        self.inner_layout = QVBoxLayout(self.panel)
+        self.inner_layout.setContentsMargins(40, 40, 40, 40)
+        self.inner_layout.setSpacing(20)
+        
+        self.icon_lbl = QLabel("👤")
+        self.icon_lbl.setStyleSheet(f"font-size: 60px; color: {self.hub.accent_color};")
+        self.icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        first_name = self.security_data.get('name', 'Usuário').split(' ')[0]
+        self.lbl_greeting = QLabel(f"Olá! {first_name},\ndigite sua senha para acessar:")
+        self.lbl_greeting.setStyleSheet("font-size: 18px; font-weight: bold; text-align: center;")
+        self.lbl_greeting.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.input_pwd = QLineEdit()
+        self.input_pwd.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_pwd.setPlaceholderText("Senha secreta...")
+        self.input_pwd.returnPressed.connect(self.check_password)
+        
+        self.btn_unlock = QPushButton("Acessar o Hub")
+        self.btn_unlock.clicked.connect(self.check_password)
+        
+        self.lbl_error = QLabel("")
+        self.lbl_error.setStyleSheet("color: #ff5252; font-size: 13px; font-weight: bold;")
+        self.lbl_error.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.lbl_hint = QLabel(f"Dica: {self.security_data.get('hint', '')}")
+        self.lbl_hint.setStyleSheet("color: #8a909d; font-size: 12px;")
+        self.lbl_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.inner_layout.addStretch()
+        self.inner_layout.addWidget(self.icon_lbl)
+        self.inner_layout.addWidget(self.lbl_greeting)
+        self.inner_layout.addSpacing(10)
+        self.inner_layout.addWidget(self.input_pwd)
+        self.inner_layout.addWidget(self.btn_unlock)
+        self.inner_layout.addWidget(self.lbl_error)
+        self.inner_layout.addWidget(self.lbl_hint)
+        self.inner_layout.addStretch()
+        
+        self.panel_layout.addWidget(self.panel)
+        self.layout.addWidget(self.panel_container)
+        
+        self.input_key = QLineEdit()
+        self.input_key.setPlaceholderText("Chave Mestra (Ex: FIUZA-XXXX-XXXX)")
+        self.input_key.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.input_key.setVisible(False)
+        self.input_key.returnPressed.connect(self.validate_master_key)
+        
+        self.btn_validate = QPushButton("Validar Chave")
+        self.btn_validate.setVisible(False)
+        self.btn_validate.clicked.connect(self.validate_master_key)
+        
+        self.inner_layout.insertWidget(4, self.input_key)
+        self.inner_layout.insertWidget(5, self.btn_validate)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        bg_path = self.security_data.get('image', '')
+        if bg_path and os.path.exists(bg_path):
+            pixmap = QPixmap(bg_path).scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            x = (self.width() - pixmap.width()) // 2
+            y = (self.height() - pixmap.height()) // 2
+            painter.drawPixmap(x, y, pixmap)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 160)) 
+
+    def check_password(self):
+        pwd = self.input_pwd.text().strip()
+        hashed_pwd = hashlib.sha256(pwd.encode()).hexdigest()
+        
+        if hashed_pwd == self.security_data.get('password_hash'):
+            self.hub.centralWidget().setGraphicsEffect(None)
+            self.hide()
+            self.deleteLater()
+        else:
+            self.attempts += 1
+            self.input_pwd.clear()
+            self.lbl_error.setText("Usuário ou senha incorreta.")
+            if self.attempts >= 3:
+                self.trigger_recovery()
+
+    def trigger_recovery(self):
+        self.input_pwd.setVisible(False)
+        self.btn_unlock.setVisible(False)
+        self.lbl_hint.setVisible(False)
+        
+        self.lbl_error.setStyleSheet("color: #ffeb3b; font-size: 13px; font-weight: bold;")
+        self.lbl_error.setText("Bloqueio Ativo.\nPor favor, informe a sua Chave Mestra\nde Recuperação.")
+        
+        self.input_key.setVisible(True)
+        self.btn_validate.setVisible(True)
+
+    def validate_master_key(self):
+        master_key_input = self.input_key.text().strip().upper()
+        hashed_input = hashlib.sha256(master_key_input.encode()).hexdigest()
+        
+        if hashed_input == self.security_data.get('master_key_hash'):
+            self.input_key.clear()
+            dialog = SecuritySetupDialog(self.hub, self.security_data)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.hub.security_settings = dialog.final_data
+                self.hub.save_settings(force=True)
+                self.security_data = self.hub.security_settings
+                self.hub.centralWidget().setGraphicsEffect(None)
+                self.hide()
+                self.deleteLater()
+        else:
+            self.lbl_error.setStyleSheet("color: #ff5252; font-size: 13px; font-weight: bold;")
+            self.lbl_error.setText("Chave Mestra Inválida!")
+            self.input_key.clear()
