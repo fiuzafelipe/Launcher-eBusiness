@@ -3,6 +3,7 @@ import sys
 import json
 import gc
 import datetime
+import re
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QSpacerItem, QSizePolicy, QDialog, 
                              QLineEdit, QLabel, QCheckBox, QFormLayout, QComboBox,
@@ -58,6 +59,7 @@ class StandaloneHub(QMainWindow):
         self.auto_save = False          
         self.save_tabs_enabled = False  
         self.opened_tabs_urls = []
+        self.pinned_tabs = []
         self.zoom_settings = {}
         self.security_settings = {}
         self.history_data = {}
@@ -74,7 +76,6 @@ class StandaloneHub(QMainWindow):
 
         self.load_settings()
 
-        # O COFRE BLINDADO
         app_data = os.getenv('LOCALAPPDATA')
         self.storage_path = os.path.join(app_data, "FiuzaTechnology", "StandaloneHub", "BrowserSession")
         os.makedirs(self.storage_path, exist_ok=True)
@@ -94,6 +95,10 @@ class StandaloneHub(QMainWindow):
         settings.setAttribute(QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
         settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
+        
+        edge_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0"
+        self.profile.setHttpUserAgent(edge_ua)
+        self.profile.setHttpAcceptLanguage("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
 
         self.central_widget = QWidget()
         self.central_widget.setObjectName("CentralWidget")
@@ -107,6 +112,10 @@ class StandaloneHub(QMainWindow):
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.currentChanged.connect(self.optimize_memory_without_reload)
+        
+        # Conexão do Menu de Contexto para Fixar Abas
+        self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
         
         self.corner_widget = QWidget()
         corner_layout = QHBoxLayout(self.corner_widget)
@@ -185,6 +194,39 @@ class StandaloneHub(QMainWindow):
         
         if self.security_settings and self.security_settings.get("enabled", False):
             self.show_lock_screen()
+
+    def show_tab_context_menu(self, pos):
+        index = self.tabs.tabBar().tabAt(pos)
+        if index <= 0: return # Bloqueia modificação na aba Home
+        
+        widget = self.tabs.widget(index)
+        if not isinstance(widget, QWebEngineView): return
+        
+        is_pinned = widget.property("is_pinned")
+        
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; border-radius: 4px; padding: 5px; }}
+            QMenu::item {{ padding: 8px 25px; border-radius: 4px; }}
+            QMenu::item:selected {{ background-color: {self.accent_color}; color: #000; }}
+        """)
+        
+        if is_pinned:
+            action_unpin = menu.addAction("❌ Desfixar Aba")
+            action = menu.exec(self.tabs.tabBar().mapToGlobal(pos))
+            if action == action_unpin:
+                widget.setProperty("is_pinned", False)
+                raw_label = widget.property("original_label") or "Navegação"
+                self.tabs.setTabText(index, raw_label[:20] + ("..." if len(raw_label)>20 else ""))
+                self.save_settings(force=True)
+        else:
+            action_pin = menu.addAction("📌 Fixar Aba")
+            action = menu.exec(self.tabs.tabBar().mapToGlobal(pos))
+            if action == action_pin:
+                widget.setProperty("is_pinned", True)
+                raw_label = widget.property("original_label") or "Navegação"
+                self.tabs.setTabText(index, "📌 " + raw_label[:18] + ("..." if len(raw_label)>18 else ""))
+                self.save_settings(force=True)
 
     def closeEvent(self, event):
         self.save_settings(force=True)
@@ -402,8 +444,17 @@ class StandaloneHub(QMainWindow):
         for i in range(1, self.tabs.count()):
             widget = self.tabs.widget(i)
             if isinstance(widget, QWebEngineView):
-                if i != index: widget.setVisible(False)
-                else: widget.setVisible(True)
+                if i != index:
+                    widget.setVisible(False)
+                else:
+                    widget.setVisible(True)
+                    # O Gatilho do LAZY LOAD: Carrega a página apenas quando focada
+                    if widget.property("needs_load"):
+                        widget.setProperty("needs_load", False)
+                        url = widget.property("original_url")
+                        widget.setUrl(QUrl(url))
+                        if url in self.zoom_settings:
+                            widget.setZoomFactor(self.zoom_settings[url])
         gc.collect()
 
     def open_direct_nav_dialog(self):
@@ -457,7 +508,7 @@ class StandaloneHub(QMainWindow):
             btn.setFixedSize(130, 32)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(f"""
-                QPushButton {{ background-color: rgba({QColor(self.accent_color).red()}, {QColor(self.accent_color).green()}, {QColor(self.accent_color).blue()}, 0.85); border: 1px solid rgba(0,0,0,0.4); color: #07080a; font-size: 11px; font-weight: bold; border-radius: 4px; padding-left: 5px; padding-right: 5px; }}
+                QPushButton {{ background-color: rgba({QColor(self.accent_color).red()}, {QColor(self.accent_color).green()}, {QColor(self.accent_color).blue()}, 0.85); border: 1px solid rgba(0,0,0,0.4); color: #07080a; font-size: 11px; font-weight: bold; border-radius: 4px; padding-left: 5px; padding-right: 5px; border-image: none; }}
                 QPushButton:hover {{ background-color: {self.accent_color}; color: #07080a; border: 1px solid #000000; }}
             """)
             btn.clicked.connect(lambda checked, u=item["url"], l=item["label"]: self.open_web_tab(u, l))
@@ -580,10 +631,10 @@ class StandaloneHub(QMainWindow):
         self.fav_scroll.setWidgetResizable(True)
         self.fav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.fav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.fav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.fav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; border-image: none; }")
         
         self.fav_container = QWidget()
-        self.fav_container.setStyleSheet("background: transparent;")
+        self.fav_container.setStyleSheet("background: transparent; border-image: none;")
         self.fav_hbox = QHBoxLayout(self.fav_container)
         self.fav_hbox.setContentsMargins(0, 0, 0, 0)
         self.fav_hbox.setSpacing(15)
@@ -794,7 +845,8 @@ class StandaloneHub(QMainWindow):
             QTabBar::close-button {{ subcontrol-position: right; margin-bottom: 4px; }}
             QTabBar::tab:first {{ qproperty-closable: false; }}
             
-            QWidget#FavPanelWidget {{ background-color: rgba({c_theme.red()}, {c_theme.green()}, {c_theme.blue()}, 0.94); border-bottom: 1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.6); }}
+            QWidget#FavPanelWidget {{ background-color: rgba({c_theme.red()}, {c_theme.green()}, {c_theme.blue()}, 0.98); border-bottom: 1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.6); border-image: none; }}
+            QWidget#FavPanelWidget * {{ border-image: none; }}
             QWidget#BottomBar {{ background-color: {bottom_bar_bg}; border-top: 1px solid rgba(0,0,0,0.2); }}
             
             QPushButton#btn_ops {{ background-color: {btn_ops_bg}; border: 1px solid {accent}; color: {text_color}; font-weight: {font_weight}; border-radius: 6px; font-size: 14px; font-family: 'Segoe UI'; letter-spacing: 1.5px; transition: all 0.2s; }}
@@ -834,10 +886,6 @@ class StandaloneHub(QMainWindow):
     def trigger_save_tabs_button(self):
         self.save_tabs_enabled = not self.save_tabs_enabled
         self.update_save_tabs_button_visual()
-        if self.save_tabs_enabled:
-            self.rebuild_tabs_list_manually()
-        else:
-            self.opened_tabs_urls = []
         self.save_settings(force=True)
 
     def toggle_auto_save_from_checkbox(self, state):
@@ -1236,6 +1284,23 @@ class StandaloneHub(QMainWindow):
         if getattr(self, 'is_restoring', False): return
         if not getattr(self, 'auto_save', False) and not force: return
         self.track_zoom_levels()
+        
+        # Reconstrói de forma dinâmica o que está aberto X o que está fixado
+        pinned = []
+        urls = []
+        if hasattr(self, 'tabs'):
+            for i in range(1, self.tabs.count()):
+                widget = self.tabs.widget(i)
+                if isinstance(widget, QWebEngineView):
+                    url = widget.property("original_url") or widget.url().toString()
+                    label = widget.property("original_label") or self.tabs.tabText(i).replace("📌 ", "")
+                    if widget.property("is_pinned"):
+                        pinned.append({"label": label, "url": url})
+                    elif self.save_tabs_enabled:
+                        urls.append({"label": label, "url": url})
+            self.pinned_tabs = pinned
+            self.opened_tabs_urls = urls
+
         os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
         data = {
             "auto_save": getattr(self, 'auto_save', False),
@@ -1245,7 +1310,8 @@ class StandaloneHub(QMainWindow):
             "theme_base_color": getattr(self, 'theme_base_color', '#242120'),
             "background_image_path": getattr(self, 'background_image_path', ''),
             "buttons": getattr(self, 'buttons_list', []),
-            "opened_tabs": getattr(self, 'opened_tabs_urls', []) if getattr(self, 'save_tabs_enabled', False) else [],
+            "opened_tabs": getattr(self, 'opened_tabs_urls', []),
+            "pinned_tabs": getattr(self, 'pinned_tabs', []),
             "zoom_settings": getattr(self, 'zoom_settings', {}),
             "security": getattr(self, 'security_settings', {}),
             "history": getattr(self, 'history_data', {})
@@ -1268,6 +1334,7 @@ class StandaloneHub(QMainWindow):
                     for b in self.buttons_list:
                         if "favorite" not in b: b["favorite"] = False
                     self.opened_tabs_urls = data.get("opened_tabs", [])
+                    self.pinned_tabs = data.get("pinned_tabs", [])
                     self.zoom_settings = data.get("zoom_settings", {})
                     self.security_settings = data.get("security", {})
                     self.history_data = data.get("history", {})
@@ -1279,6 +1346,7 @@ class StandaloneHub(QMainWindow):
         self.zoom_settings = {}
         self.security_settings = {}
         self.history_data = {}
+        self.pinned_tabs = []
         self.update_wallpaper_brightness()
 
     def reset_to_defaults(self):
@@ -1292,6 +1360,7 @@ class StandaloneHub(QMainWindow):
         self.auto_save = False
         self.save_tabs_enabled = False
         self.opened_tabs_urls = []
+        self.pinned_tabs = []
         self.zoom_settings = {}
         self.security_settings = {}
         self.history_data = {}
@@ -1300,7 +1369,7 @@ class StandaloneHub(QMainWindow):
         self.create_home_tab()
         self.update_favorites_panel()
 
-    def open_web_tab(self, url, title):
+    def open_web_tab(self, url, title, is_pinned=False, lazy_load=False):
         self.search_filter = ""
         if hasattr(self, 'search_bar') and self.search_bar:
             self.search_bar.blockSignals(True)
@@ -1313,32 +1382,46 @@ class StandaloneHub(QMainWindow):
         browser.setPage(page)
         
         browser.setProperty("original_url", url)
-        browser.setUrl(QUrl(url))
+        browser.setProperty("original_label", title)
+        browser.setProperty("is_pinned", is_pinned)
         
         browser.titleChanged.connect(lambda t, b=browser: self.on_title_changed(b, t))
         browser.page().zoomFactorChanged.connect(lambda factor, b=browser: self.on_zoom_changed(b, factor))
         browser.loadFinished.connect(lambda ok, b=browser: self.apply_whatsapp_theme_on_load(b))
         
-        if url in self.zoom_settings: browser.setZoomFactor(self.zoom_settings[url])
+        display_title = title[:20] + "..." if len(title) > 20 else title
+        if is_pinned:
+            display_title = "📌 " + title[:18] + ("..." if len(title) > 18 else "")
             
-        index = self.tabs.addTab(browser, title)
-        self.tabs.setCurrentIndex(index)
+        index = self.tabs.addTab(browser, display_title)
+        
+        if lazy_load:
+            browser.setProperty("needs_load", True)
+        else:
+            browser.setProperty("needs_load", False)
+            browser.setUrl(QUrl(url))
+            if url in self.zoom_settings: browser.setZoomFactor(self.zoom_settings[url])
+            self.tabs.setCurrentIndex(index)
         
         if not getattr(self, 'is_restoring', False) and not url.startswith("about:"):
             self.log_history(title, url)
         
-        if getattr(self, 'save_tabs_enabled', False) and not getattr(self, 'is_restoring', False):
-            self.opened_tabs_urls.append({"label": title, "url": url})
+        if not getattr(self, 'is_restoring', False):
             self.save_settings(force=True)
 
     def on_title_changed(self, browser, title):
         index = self.tabs.indexOf(browser)
         if index != -1:
             if not title.strip(): title = "Navegação"
+            browser.setProperty("original_label", title)
+            is_pinned = browser.property("is_pinned")
+            
             short_title = title[:20] + "..." if len(title) > 20 else title
+            if is_pinned:
+                short_title = "📌 " + title[:18] + "..." if len(title) > 18 else "📌 " + title
+                
             self.tabs.setTabText(index, short_title)
             if getattr(self, 'save_tabs_enabled', False) and not getattr(self, 'is_restoring', False):
-                self.rebuild_tabs_list_manually()
                 self.save_settings(force=True)
 
     def apply_whatsapp_theme_on_load(self, browser):
@@ -1384,40 +1467,29 @@ class StandaloneHub(QMainWindow):
 
     def close_tab(self, index):
         if index != 0:
-            if getattr(self, 'save_tabs_enabled', False) and not getattr(self, 'is_restoring', False):
-                tab_title = self.tabs.tabText(index)
-                self.opened_tabs_urls = [t for t in self.opened_tabs_urls if t["label"] != tab_title]
             widget = self.tabs.widget(index)
             if widget: widget.deleteLater()
             self.tabs.removeTab(index)
-            if getattr(self, 'save_tabs_enabled', False) and not getattr(self, 'is_restoring', False): self.save_settings(force=True)
-
-    def track_tabs_after_move(self):
-        if not getattr(self, 'save_tabs_enabled', False) or getattr(self, 'is_restoring', False): return
-        urls = []
-        for i in range(1, self.tabs.count()):
-            widget = self.tabs.widget(i)
-            if isinstance(widget, QWebEngineView):
-                saved_url = widget.property("original_url") or widget.url().toString()
-                urls.append({"label": self.tabs.tabText(i), "url": saved_url})
-        self.opened_tabs_urls = urls
-        self.save_settings(force=True)
-
-    def rebuild_tabs_list_manually(self):
-        urls = []
-        for i in range(1, self.tabs.count()):
-            widget = self.tabs.widget(i)
-            if isinstance(widget, QWebEngineView):
-                saved_url = widget.property("original_url") or widget.url().toString()
-                urls.append({"label": self.tabs.tabText(i), "url": saved_url})
-        self.opened_tabs_urls = urls
+            if not getattr(self, 'is_restoring', False): 
+                self.save_settings(force=True)
 
     def restore_tabs(self):
+        self.is_restoring = True
+        
+        # 1. Restaura as Abas Fixadas no modo Invisível/Preguiçoso (Lazy Load)
+        for t in getattr(self, 'pinned_tabs', []):
+            self.open_web_tab(t["url"], t["label"], is_pinned=True, lazy_load=True)
+            
+        # 2. Restaura o Histórico de Abas Abertas da Sessão (Se o Save Abas estiver Ativado)
         if getattr(self, 'save_tabs_enabled', False) and self.opened_tabs_urls:
-            self.is_restoring = True
             tabs_to_open = list(self.opened_tabs_urls)
-            for t in tabs_to_open: self.open_web_tab(t["url"], t["label"])
-            QTimer.singleShot(200, self.release_restore_lock)
+            for t in tabs_to_open:
+                # Impede duplicar a mesma aba caso ela já tenha sido aberta pelo Fixador
+                already_pinned = any(p["url"] == t["url"] for p in getattr(self, 'pinned_tabs', []))
+                if not already_pinned:
+                    self.open_web_tab(t["url"], t["label"], is_pinned=False, lazy_load=False)
+                    
+        QTimer.singleShot(200, self.release_restore_lock)
 
     def release_restore_lock(self):
         self.is_restoring = False
