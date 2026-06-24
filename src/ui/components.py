@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QApplication, QDialog, QVBoxLayout, QHBoxLayout, QF
                              QPushButton, QLineEdit, QLabel, QFileDialog, 
                              QMessageBox, QFrame, QGridLayout, QMenu, QComboBox, QScrollArea, QWidget)
 from PyQt6.QtCore import Qt, QMimeData
-from PyQt6.QtGui import QPixmap, QColor, QDrag, QImage
+from PyQt6.QtGui import QPixmap, QColor, QDrag, QImage, QPainter
 from core.remote_tools import launch_remote_tool
 
 class SecuritySetupDialog(QDialog):

@@ -7,12 +7,13 @@ import re
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QSpacerItem, QSizePolicy, QDialog, 
                              QLineEdit, QLabel, QCheckBox, QFormLayout, QComboBox,
-                             QFileDialog, QColorDialog, QMessageBox, QScrollArea, QMenu, QGraphicsBlurEffect)
+                             QFileDialog, QColorDialog, QMessageBox, QScrollArea, QMenu, QGraphicsBlurEffect,
+                             QStackedLayout)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import (QWebEngineProfile, QWebEnginePage, QWebEngineSettings, 
                                    QWebEnginePermission, QWebEngineDownloadRequest)
-from PyQt6.QtCore import QUrl, Qt, QPoint, QTimer, QRect, QEvent
-from PyQt6.QtGui import QIcon, QColor, QImage, QShortcut, QKeySequence, QCursor
+from PyQt6.QtCore import QUrl, Qt, QPoint, QTimer, QRect, QEvent, QPointF
+from PyQt6.QtGui import QIcon, QColor, QImage, QShortcut, QKeySequence, QCursor, QPixmap, QPainter, QPainterPath, QPen
 
 # Importações dos módulos customizados
 from ui.components import (SecuritySetupDialog, SecurityModifyDialog, SecurityChangePasswordDialog, 
@@ -21,6 +22,89 @@ from core.remote_tools import launch_remote_tool
 
 current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# =========================================================================================
+# A MÁGICA DA RAM ZERO: FÍSICA DE CABOS USB VETORIAIS
+# =========================================================================================
+class CableNetworkWidget(QWidget):
+    def __init__(self, parent_hub, parent=None):
+        super().__init__(parent)
+        self.parent_hub = parent_hub
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("background: transparent; border-image: none;")
+        
+        # O Motor da Animação: Extremamente leve (~40ms = 25 FPS). Consumo imperceptível.
+        self.dash_offset = 0
+        self.anim_timer = QTimer(self)
+        self.anim_timer.timeout.connect(self.update_animation)
+        self.anim_timer.start(40) 
+
+    def update_animation(self):
+        # A ilusão de ótica: empurramos o tracejado para criar movimento.
+        # O % 15 previne que o número cresça ao infinito e estoure a memória (15 = 5 linha + 10 vazio)
+        self.dash_offset = (self.dash_offset - 1) % 15 
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        layout = self.parent_hub.grid_layout
+        if not layout or layout.count() < 2: return
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        accent_color = QColor(self.parent_hub.accent_color)
+        
+        centers = []
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item and item.widget():
+                w = item.widget()
+                if w.isVisible():
+                    # Mapeia o centro do botão para o widget de cabos
+                    pos = w.mapTo(self, QPoint(w.width()//2, w.height()//2))
+                    centers.append(pos)
+        
+        if len(centers) < 2:
+            painter.end()
+            return
+
+        cable_color = QColor(10, 10, 15, 160) 
+        base_pen = QPen(cable_color, 6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        
+        pulse_pen = QPen(accent_color, 2, Qt.PenStyle.CustomDashLine, Qt.PenCapStyle.RoundCap)
+        pulse_pen.setDashPattern([5, 10]) 
+        pulse_pen.setDashOffset(self.dash_offset)
+        
+        for i in range(len(centers)-1):
+            # A CORREÇÃO ESTÁ AQUI: Convertemos para QPointF
+            p1 = QPointF(centers[i])
+            p2 = QPointF(centers[i+1])
+            
+            path = QPainterPath()
+            path.moveTo(p1)
+            
+            # Cálculo de gravidade suave
+            if abs(p1.y() - p2.y()) < 20: 
+                cp1 = QPointF(p1.x() + (p2.x() - p1.x()) / 3, p1.y() + 60)
+                cp2 = QPointF(p2.x() - (p2.x() - p1.x()) / 3, p2.y() + 60)
+            else:
+                cp1 = QPointF(p1.x() + 100, p1.y() + 80)
+                cp2 = QPointF(p2.x() - 100, p2.y() - 80)
+                
+            path.cubicTo(cp1, cp2, p2)
+            
+            painter.setPen(base_pen)
+            painter.drawPath(path)
+            
+            painter.setPen(pulse_pen)
+            painter.drawPath(path)
+            
+        painter.end()
+
+
+# =========================================================================================
+# APLICAÇÃO PRINCIPAL
+# =========================================================================================
 class StandaloneHub(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -113,11 +197,11 @@ class StandaloneHub(QMainWindow):
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.currentChanged.connect(self.optimize_memory_without_reload)
         
-        # Conexão do Menu de Contexto para Fixar Abas
         self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
         
         self.corner_widget = QWidget()
+        self.corner_widget.setObjectName("CornerWidget")
         corner_layout = QHBoxLayout(self.corner_widget)
         corner_layout.setContentsMargins(5, 2, 5, 2)
         corner_layout.setSpacing(5)
@@ -197,7 +281,7 @@ class StandaloneHub(QMainWindow):
 
     def show_tab_context_menu(self, pos):
         index = self.tabs.tabBar().tabAt(pos)
-        if index <= 0: return # Bloqueia modificação na aba Home
+        if index <= 0: return 
         
         widget = self.tabs.widget(index)
         if not isinstance(widget, QWebEngineView): return
@@ -206,8 +290,8 @@ class StandaloneHub(QMainWindow):
         
         menu = QMenu(self)
         menu.setStyleSheet(f"""
-            QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; border-radius: 4px; padding: 5px; }}
-            QMenu::item {{ padding: 8px 25px; border-radius: 4px; }}
+            QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; border-radius: 4px; padding: 5px; border-image: none; }}
+            QMenu::item {{ padding: 8px 25px; border-radius: 4px; border-image: none; }}
             QMenu::item:selected {{ background-color: {self.accent_color}; color: #000; }}
         """)
         
@@ -247,8 +331,8 @@ class StandaloneHub(QMainWindow):
         if self.tabs.currentIndex() == 0:
             menu = QMenu(self)
             menu.setStyleSheet(f"""
-                QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; border-radius: 4px; padding: 5px; }}
-                QMenu::item {{ padding: 8px 25px; border-radius: 4px; }}
+                QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; border-radius: 4px; padding: 5px; border-image: none; }}
+                QMenu::item {{ padding: 8px 25px; border-radius: 4px; border-image: none; }}
                 QMenu::item:selected {{ background-color: {self.accent_color}; color: #000; }}
             """)
             history_action = menu.addAction("🕒 Histórico")
@@ -334,9 +418,9 @@ class StandaloneHub(QMainWindow):
         dialog.setWindowTitle("Sobre o Standalone Hub")
         dialog.setFixedSize(400, 150)
         dialog.setStyleSheet(f"""
-            QDialog {{ background-color: #11141a; border: 1px solid #232a38; }}
-            QLabel {{ color: {self.accent_color}; font-family: 'Segoe UI'; font-size: 15px; font-weight: bold; text-align: center; }}
-            QPushButton {{ background-color: #161b24; border: 1px solid #232a38; color: #fff; padding: 8px; border-radius: 4px; font-weight: bold; font-family: 'Segoe UI'; font-size: 13px; width: 100px; }}
+            QDialog {{ background-color: #11141a; border: 1px solid #232a38; border-image: none; }}
+            QLabel {{ color: {self.accent_color}; font-family: 'Segoe UI'; font-size: 15px; font-weight: bold; text-align: center; border-image: none; }}
+            QPushButton {{ background-color: #161b24; border: 1px solid #232a38; color: #fff; padding: 8px; border-radius: 4px; font-weight: bold; font-family: 'Segoe UI'; font-size: 13px; width: 100px; border-image: none; }}
             QPushButton:hover {{ background-color: {self.accent_color}; color: #000; border-color: {self.accent_color}; }}
         """)
         layout = QVBoxLayout(dialog)
@@ -377,11 +461,11 @@ class StandaloneHub(QMainWindow):
         dialog.setWindowTitle("Editar Botão")
         dialog.setFixedWidth(420)
         dialog.setStyleSheet(f"""
-            QDialog {{ background-color: #11141a; border: 1px solid #1c212d; }}
-            QLabel {{ color: #a0a5b5; font-family: 'Segoe UI'; font-size: 12px; font-weight: bold; }}
-            QLineEdit {{ background-color: #161b24; border: 1px solid {self.accent_color}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; }}
+            QDialog {{ background-color: #11141a; border: 1px solid #1c212d; border-image: none; }}
+            QLabel {{ color: #a0a5b5; font-family: 'Segoe UI'; font-size: 12px; font-weight: bold; border-image: none; }}
+            QLineEdit {{ background-color: #161b24; border: 1px solid {self.accent_color}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; border-image: none; }}
             QLineEdit:focus {{ border: 1px solid {self.accent_color}; }}
-            QPushButton {{ font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
+            QPushButton {{ font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; border-image: none; }}
         """)
         form_layout = QFormLayout(dialog)
         form_layout.setContentsMargins(20, 20, 20, 20)
@@ -448,7 +532,6 @@ class StandaloneHub(QMainWindow):
                     widget.setVisible(False)
                 else:
                     widget.setVisible(True)
-                    # O Gatilho do LAZY LOAD: Carrega a página apenas quando focada
                     if widget.property("needs_load"):
                         widget.setProperty("needs_load", False)
                         url = widget.property("original_url")
@@ -462,11 +545,11 @@ class StandaloneHub(QMainWindow):
         dialog.setWindowTitle("Navegador Rápido")
         dialog.setFixedWidth(450)
         dialog.setStyleSheet(f"""
-            QDialog {{ background-color: #11141a; border: 1px solid #232a38; border-radius: 8px; }}
-            QLabel {{ color: {self.accent_color}; font-family: 'Segoe UI'; font-weight: bold; font-size: 13px; }}
-            QLineEdit {{ background-color: #161b24; border: 1px solid #232a38; color: #fff; padding: 12px; border-radius: 6px; font-size: 13px; }}
+            QDialog {{ background-color: #11141a; border: 1px solid #232a38; border-radius: 8px; border-image: none; }}
+            QLabel {{ color: {self.accent_color}; font-family: 'Segoe UI'; font-weight: bold; font-size: 13px; border-image: none; }}
+            QLineEdit {{ background-color: #161b24; border: 1px solid #232a38; color: #fff; padding: 12px; border-radius: 6px; font-size: 13px; border-image: none; }}
             QLineEdit:focus {{ border: 1px solid {self.accent_color}; }}
-            QPushButton {{ background-color: {self.accent_color}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; font-size: 13px; }}
+            QPushButton {{ background-color: {self.accent_color}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; font-size: 13px; border-image: none; }}
             QPushButton:hover {{ opacity: 0.8; }}
             QPushButton#btn_cancel {{ background-color: #161b24; color: #fff; border: 1px solid #232a38; }}
         """)
@@ -495,36 +578,57 @@ class StandaloneHub(QMainWindow):
 
     def update_favorites_panel(self, filter_text=""):
         if not hasattr(self, 'fav_hbox') or not self.fav_hbox: return
+        
         while self.fav_hbox.count():
-            child = self.fav_hbox.takeAt(0)
-            if child.widget(): child.widget().deleteLater()
+            item = self.fav_hbox.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
             
         fav_items = [b for b in self.buttons_list if b.get("favorite", False)]
         if filter_text:
             fav_items = [b for b in fav_items if filter_text.strip().lower() in b["label"].lower()]
             
+        c_accent = QColor(self.accent_color)
+        bg_rgba = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.85)"
+            
         for item in fav_items:
             btn = QPushButton(item["label"])
-            btn.setFixedSize(130, 32)
+            btn.setObjectName("FavItemBtn")
+            btn.setFixedSize(140, 32)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            
             btn.setStyleSheet(f"""
-                QPushButton {{ background-color: rgba({QColor(self.accent_color).red()}, {QColor(self.accent_color).green()}, {QColor(self.accent_color).blue()}, 0.85); border: 1px solid rgba(0,0,0,0.4); color: #07080a; font-size: 11px; font-weight: bold; border-radius: 4px; padding-left: 5px; padding-right: 5px; border-image: none; }}
-                QPushButton:hover {{ background-color: {self.accent_color}; color: #07080a; border: 1px solid #000000; }}
+                QPushButton#FavItemBtn {{ 
+                    background-color: {bg_rgba}; 
+                    border: 1px solid rgba(0,0,0,0.5); 
+                    color: #07080a; 
+                    font-size: 12px; 
+                    font-weight: bold; 
+                    border-radius: 4px; 
+                    border-image: none !important;
+                }}
+                QPushButton#FavItemBtn:hover {{ 
+                    background-color: {self.accent_color}; 
+                }}
             """)
             btn.clicked.connect(lambda checked, u=item["url"], l=item["label"]: self.open_web_tab(u, l))
             self.fav_hbox.addWidget(btn)
+            btn.show() 
+            
         self.fav_hbox.addStretch()
 
     def show_fav_panel(self):
-        if hasattr(self, 'fav_panel_widget') and not self.fav_panel_widget.isVisible():
-            if hasattr(self, 'fav_placeholder'): self.fav_placeholder.setVisible(False)
-            self.fav_panel_widget.setVisible(True)
+        if hasattr(self, 'fav_area_layout'):
+            if self.fav_area_layout.currentWidget() != self.fav_panel_widget:
+                self.update_favorites_panel(self.fav_search_bar.text())
+                self.fav_area_layout.setCurrentWidget(self.fav_panel_widget)
 
     def hide_fav_panel(self):
-        if hasattr(self, 'fav_panel_widget') and self.fav_panel_widget.isVisible():
-            if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible() and self.fav_search_bar.hasFocus(): return
-            self.fav_panel_widget.setVisible(False)
-            if hasattr(self, 'fav_placeholder'): self.fav_placeholder.setVisible(True)
+        if hasattr(self, 'fav_area_layout'):
+            if self.fav_area_layout.currentWidget() == self.fav_panel_widget:
+                if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible() and self.fav_search_bar.hasFocus(): return
+                self.fav_area_layout.setCurrentWidget(self.fav_placeholder)
 
     def check_mouse_position_for_favorites(self):
         if not hasattr(self, 'home_widget') or not self.home_widget: return
@@ -544,7 +648,7 @@ class StandaloneHub(QMainWindow):
         global_cursor_pos = QCursor.pos()
         cursor_pos = self.mapFromGlobal(global_cursor_pos)
         
-        if cursor_pos.y() >= 0 and cursor_pos.y() <= 140:
+        if cursor_pos.y() >= 0 and cursor_pos.y() <= 95:
             self.show_fav_panel()
         else:
             self.hide_fav_panel()
@@ -603,6 +707,7 @@ class StandaloneHub(QMainWindow):
 
         self.home_widget = QWidget()
         self.home_widget.setObjectName("HomeTab")
+        self.home_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.home_widget.setStyleSheet("background-color: transparent;")
 
         home_vertical_layout = QVBoxLayout(self.home_widget)
@@ -610,50 +715,35 @@ class StandaloneHub(QMainWindow):
         home_vertical_layout.setSpacing(0)
         
         self.fav_area = QWidget()
-        self.fav_area.setFixedHeight(48)
-        self.fav_area_layout = QVBoxLayout(self.fav_area)
+        self.fav_area.setObjectName("FavArea")
+        self.fav_area.setFixedHeight(45) 
+        self.fav_area.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        
+        self.fav_area_layout = QStackedLayout(self.fav_area)
         self.fav_area_layout.setContentsMargins(0,0,0,0)
-        self.fav_area_layout.setSpacing(0)
 
         self.fav_placeholder = QWidget()
-        self.fav_placeholder.setFixedHeight(48)
-        self.fav_placeholder.setStyleSheet("background: transparent;")
+        self.fav_placeholder.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.fav_placeholder.setStyleSheet("background: transparent; border-image: none;")
         
         self.fav_panel_widget = QWidget()
         self.fav_panel_widget.setObjectName("FavPanelWidget")
-        self.fav_panel_widget.setFixedHeight(48)
-        self.fav_panel_widget.setVisible(False)
+        self.fav_panel_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         
-        self.fav_layout = QVBoxLayout(self.fav_panel_widget)
-        self.fav_layout.setContentsMargins(15, 5, 15, 5)
-        
-        self.fav_scroll = QScrollArea()
-        self.fav_scroll.setWidgetResizable(True)
-        self.fav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.fav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.fav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; border-image: none; }")
-        
-        self.fav_container = QWidget()
-        self.fav_container.setStyleSheet("background: transparent; border-image: none;")
-        self.fav_hbox = QHBoxLayout(self.fav_container)
-        self.fav_hbox.setContentsMargins(0, 0, 0, 0)
-        self.fav_hbox.setSpacing(15)
-        
-        self.fav_scroll.setWidget(self.fav_container)
-        self.fav_layout.addWidget(self.fav_scroll)
+        self.fav_hbox = QHBoxLayout(self.fav_panel_widget)
+        self.fav_hbox.setContentsMargins(15, 0, 15, 0)
+        self.fav_hbox.setSpacing(10)
 
-        self.fav_area_layout.addWidget(self.fav_placeholder)
-        self.fav_area_layout.addWidget(self.fav_panel_widget)
+        self.fav_area_layout.addWidget(self.fav_placeholder) 
+        self.fav_area_layout.addWidget(self.fav_panel_widget) 
+        self.fav_area_layout.setCurrentWidget(self.fav_placeholder)
+        
         home_vertical_layout.addWidget(self.fav_area)
         
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        
-        content_container = QWidget()
-        content_container.setStyleSheet("background: transparent;")
-        content_layout = QVBoxLayout(content_container)
-        content_layout.setContentsMargins(40, 20, 40, 25)
+        # INJEÇÃO DA NOSSA PLACA DE CIRCUITO INVISÍVEL
+        self.grid_container_widget = CableNetworkWidget(self)
+        content_layout = QVBoxLayout(self.grid_container_widget)
+        content_layout.setContentsMargins(40, 15, 40, 25)
         
         control_panel_layout = QVBoxLayout()
         control_panel_layout.setSpacing(10)
@@ -695,7 +785,7 @@ class StandaloneHub(QMainWindow):
         self.search_bar.textChanged.connect(self.filter_buttons_by_search)
         
         self.search_bar.setStyleSheet(f"""
-            QLineEdit {{ background-color: {input_bg}; border: 1px solid rgba(0, 0, 0, 0.6); border-radius: 6px; color: {input_text}; font-family: 'Segoe UI'; font-size: 13px; font-weight: {font_weight}; padding-left: 15px; padding-right: 15px; }}
+            QLineEdit {{ background-color: {input_bg}; border: 1px solid rgba(0, 0, 0, 0.6); border-radius: 6px; color: {input_text}; font-family: 'Segoe UI'; font-size: 13px; font-weight: {font_weight}; padding-left: 15px; padding-right: 15px; border-image: none; }}
             QLineEdit:focus {{ border: 2px solid {self.accent_color}; }}
         """)
         
@@ -705,12 +795,6 @@ class StandaloneHub(QMainWindow):
         content_layout.addLayout(control_panel_layout)
         content_layout.addSpacing(20)
 
-        self.grid_container_widget = QWidget()
-        self.grid_container_widget.setFixedHeight(315)
-        self.grid_container_layout = QVBoxLayout(self.grid_container_widget)
-        self.grid_container_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.addWidget(self.grid_container_widget)
-        
         self.grid_layout = QGridLayout()
         self.grid_layout.setSpacing(25)
         
@@ -718,7 +802,7 @@ class StandaloneHub(QMainWindow):
         grid_container_hbox.addStretch()
         grid_container_hbox.addLayout(self.grid_layout)
         grid_container_hbox.addStretch()
-        self.grid_container_layout.addLayout(grid_container_hbox)
+        content_layout.addLayout(grid_container_hbox)
 
         self.nav_container = QWidget()
         self.nav_container.setFixedHeight(45)
@@ -728,7 +812,7 @@ class StandaloneHub(QMainWindow):
         
         hover_dark_tint = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40)"
         nav_style = f"""
-            QPushButton {{ background-color: {self.accent_color}; border: 1px solid #000000; color: #07080a; font-weight: bold; font-size: 15px; border-radius: 5px; }}
+            QPushButton {{ background-color: {self.accent_color}; border: 1px solid #000000; color: #07080a; font-weight: bold; font-size: 15px; border-radius: 5px; border-image: none; }}
             QPushButton:hover {{ background-color: {hover_dark_tint}; color: {self.accent_color}; border-color: {self.accent_color}; }}
             QPushButton:disabled {{ border: 1px solid rgba(0,0,0,0.1); color: rgba(120, 120, 120, 0.5); background-color: rgba(0, 0, 0, 0.15); }}
         """
@@ -741,7 +825,7 @@ class StandaloneHub(QMainWindow):
         self.page_label = QLabel(f"Página {self.current_page + 1}")
         self.page_label.setFixedWidth(80) 
         self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.page_label.setStyleSheet(f"color: {page_color}; font-weight: {font_weight}; font-size: 14px; font-family: 'Segoe UI'; background: transparent;")
+        self.page_label.setStyleSheet(f"color: {page_color}; font-weight: {font_weight}; font-size: 14px; font-family: 'Segoe UI'; background: transparent; border-image: none;")
         
         self.btn_next_page = QPushButton(">")
         self.btn_next_page.setFixedSize(60, 40)
@@ -753,10 +837,14 @@ class StandaloneHub(QMainWindow):
         nav_layout.addWidget(self.btn_next_page)
         nav_layout.addStretch()
         
-        content_layout.addWidget(self.nav_container)
         content_layout.addStretch()
+        content_layout.addWidget(self.nav_container)
         
-        scroll_area.setWidget(content_container)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; border-image: none; }")
+        scroll_area.setWidget(self.grid_container_widget)
+        
         home_vertical_layout.addWidget(scroll_area)
 
         self.tabs.insertTab(0, self.home_widget, "Home")
@@ -778,9 +866,14 @@ class StandaloneHub(QMainWindow):
         has_wp = hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path)
         is_bg_light = getattr(self, 'is_wp_light', False)
         
-        icon_col = "#07080a" if is_light_theme and not has_wp else "#ffffff"
-        self.btn_direct_nav.setStyleSheet(f"QPushButton {{ background: transparent; border: none; font-size: 14px; color: {icon_col}; }} QPushButton:hover {{ color: {accent}; }}")
-        self.btn_search_fav.setStyleSheet(f"QPushButton {{ background: transparent; border: none; font-size: 14px; color: {icon_col}; }} QPushButton:hover {{ color: {accent}; }}")
+        if has_wp:
+            icon_col = "#111111" if is_bg_light else "#ffffff"
+        else:
+            icon_col = "#07080a" if is_light_theme else "#ffffff"
+            
+        self.btn_direct_nav.setStyleSheet(f"QPushButton {{ background: transparent; border: none; font-size: 14px; color: {icon_col}; border-image: none; }} QPushButton:hover {{ color: {accent}; }}")
+        self.btn_search_fav.setStyleSheet(f"QPushButton {{ background: transparent; border: none; font-size: 14px; color: {icon_col}; border-image: none; }} QPushButton:hover {{ color: {accent}; }}")
+        self.corner_widget.setStyleSheet("background: transparent; border-image: none;")
         
         search_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.25)"
         text_search_fav = "#000000" if is_light_theme else "#ffffff"
@@ -792,6 +885,10 @@ class StandaloneHub(QMainWindow):
             QLineEdit:focus {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.5); }}
         """)
         
+        # A LINHA FORTE E UNIFICADA (Superior, 2px) e A LINHA FRACA COM A SUA COR DE DESTAQUE (Inferior, 1px)
+        strong_line = f"2px solid {accent}"
+        faint_line = f"1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.50)"
+        
         if has_wp:
             bg_path = self.background_image_path.replace("\\", "/")
             main_bg_style = f"border-image: url('{bg_path}') 0 0 0 0 stretch stretch;"
@@ -802,7 +899,6 @@ class StandaloneHub(QMainWindow):
             tab_active_bg = "rgba(255, 255, 255, 0.85)" if is_bg_light else "rgba(20, 20, 20, 0.85)"
             
             pane_bg = "transparent"
-            pane_border = f"2px solid {accent}"
             
             btn_ops_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.5)"
             btn_ops_hover_bg = accent
@@ -817,13 +913,12 @@ class StandaloneHub(QMainWindow):
             top_bar_bg_solid = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(30, c_theme.lightness() - 12)).name() if is_light_theme else QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(5, c_theme.lightness() - 8)).name()
             tab_inactive_bg_solid = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(40, c_theme.lightness() - 20)).name() if is_light_theme else QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(10, c_theme.lightness() + 6)).name()
             
-            main_bg_style = f"background-color: {top_bar_bg_solid};"
+            main_bg_style = f"background-color: {top_bar_bg_solid}; border-image: none;"
             tabbar_bg = top_bar_bg_solid
             tab_inactive_bg = tab_inactive_bg_solid
             tab_active_bg = main_bg
             
             pane_bg = main_bg
-            pane_border = f"2px solid {accent}"
             
             btn_ops_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.08)"
             btn_ops_hover_bg = accent
@@ -837,22 +932,30 @@ class StandaloneHub(QMainWindow):
         
         self.setStyleSheet(f"""
             QWidget#CentralWidget {{ {main_bg_style} }}
-            QTabWidget::pane {{ border-top: {pane_border}; background: {pane_bg}; border-image: none; }}
-            QTabBar {{ background-color: {tabbar_bg}; border-bottom: 1px solid rgba(0,0,0,0.2); border-image: none; qproperty-drawBase: 0; }}
             
-            QTabBar::tab {{ background: {tab_inactive_bg}; color: {tab_text_color}; padding: 8px 24px 14px 24px; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 3px; margin-top: 6px; border: 1px solid rgba(0,0,0,0.15); border-bottom: none; font-family: 'Segoe UI'; font-weight: 500; font-size: 12px; }}
-            QTabBar::tab:selected {{ background: {tab_active_bg}; color: {accent}; font-weight: bold; border: 1px solid {accent}; border-bottom: 4px solid {tab_active_bg}; margin-top: 2px; padding-bottom: 16px; }}
+            /* A MÁGICA DA LINHA UNIFICADA (NUNCA DUPLA): Apenas o Painel ganha a linha superior grossa */
+            QTabWidget::pane {{ border-top: {strong_line}; background: {pane_bg}; border-image: none; }}
+            
+            /* TabBar perde qualquer borda no fundo para não duplicar com o Painel! */
+            QTabBar {{ background-color: {tabbar_bg}; border-bottom: none; border-image: none; qproperty-drawBase: 0; }}
+            
+            QTabBar::tab {{ background: {tab_inactive_bg}; color: {tab_text_color}; padding: 8px 24px 14px 24px; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 3px; margin-top: 6px; border: 1px solid rgba(0,0,0,0.15); border-bottom: none; font-family: 'Segoe UI'; font-weight: 500; font-size: 12px; border-image: none; }}
+            QTabBar::tab:selected {{ background: {tab_active_bg}; color: {accent}; font-weight: bold; border: 1px solid {accent}; border-bottom: none; margin-top: 2px; padding-bottom: 16px; border-image: none; }}
             QTabBar::close-button {{ subcontrol-position: right; margin-bottom: 4px; }}
             QTabBar::tab:first {{ qproperty-closable: false; }}
             
-            QWidget#FavPanelWidget {{ background-color: rgba({c_theme.red()}, {c_theme.green()}, {c_theme.blue()}, 0.98); border-bottom: 1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.6); border-image: none; }}
+            /* A LINHA FRACA COM COR 1px SÓLIDO (Borda Inferior dos Favoritos) */
+            QWidget#FavArea {{ border-image: none; background: transparent; }}
+            QWidget#FavPanelWidget {{ background-color: rgba({c_theme.red()}, {c_theme.green()}, {c_theme.blue()}, 0.95); border-bottom: {faint_line}; border-top: none; border-image: none; }}
             QWidget#FavPanelWidget * {{ border-image: none; }}
+            QWidget#HomeTab {{ border-image: none; background: transparent; }}
+            
             QWidget#BottomBar {{ background-color: {bottom_bar_bg}; border-top: 1px solid rgba(0,0,0,0.2); }}
             
-            QPushButton#btn_ops {{ background-color: {btn_ops_bg}; border: 1px solid {accent}; color: {text_color}; font-weight: {font_weight}; border-radius: 6px; font-size: 14px; font-family: 'Segoe UI'; letter-spacing: 1.5px; transition: all 0.2s; }}
+            QPushButton#btn_ops {{ background-color: {btn_ops_bg}; border: 1px solid {accent}; color: {text_color}; font-weight: {font_weight}; border-radius: 6px; font-size: 14px; font-family: 'Segoe UI'; letter-spacing: 1.5px; border-image: none; }}
             QPushButton#btn_ops:hover {{ background-color: {btn_ops_hover_bg}; color: {btn_ops_hover_text}; border: 1px solid #000000; }}
             
-            QPushButton#btn_config_menu {{ background-color: {btn_ops_bg}; border: 1px solid {accent}; color: {text_color}; font-weight: {font_weight}; border-radius: 6px; font-size: 14px; font-family: 'Segoe UI'; letter-spacing: 0.5px; transition: all 0.2s; }}
+            QPushButton#btn_config_menu {{ background-color: {btn_ops_bg}; border: 1px solid {accent}; color: {text_color}; font-weight: {font_weight}; border-radius: 6px; font-size: 14px; font-family: 'Segoe UI'; letter-spacing: 0.5px; border-image: none; }}
             QPushButton#btn_config_menu:hover {{ background-color: {btn_ops_hover_bg}; color: {btn_ops_hover_text}; border: 1px solid #000000; }}
         """)
         
@@ -1285,7 +1388,6 @@ class StandaloneHub(QMainWindow):
         if not getattr(self, 'auto_save', False) and not force: return
         self.track_zoom_levels()
         
-        # Reconstrói de forma dinâmica o que está aberto X o que está fixado
         pinned = []
         urls = []
         if hasattr(self, 'tabs'):
@@ -1476,15 +1578,12 @@ class StandaloneHub(QMainWindow):
     def restore_tabs(self):
         self.is_restoring = True
         
-        # 1. Restaura as Abas Fixadas no modo Invisível/Preguiçoso (Lazy Load)
         for t in getattr(self, 'pinned_tabs', []):
             self.open_web_tab(t["url"], t["label"], is_pinned=True, lazy_load=True)
             
-        # 2. Restaura o Histórico de Abas Abertas da Sessão (Se o Save Abas estiver Ativado)
         if getattr(self, 'save_tabs_enabled', False) and self.opened_tabs_urls:
             tabs_to_open = list(self.opened_tabs_urls)
             for t in tabs_to_open:
-                # Impede duplicar a mesma aba caso ela já tenha sido aberta pelo Fixador
                 already_pinned = any(p["url"] == t["url"] for p in getattr(self, 'pinned_tabs', []))
                 if not already_pinned:
                     self.open_web_tab(t["url"], t["label"], is_pinned=False, lazy_load=False)
