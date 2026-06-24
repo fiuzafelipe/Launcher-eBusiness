@@ -5,6 +5,7 @@ import gc
 import datetime
 import re
 from core.config_manager import ConfigManager
+from core.image_utils import process_and_save_icon
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QSpacerItem, QSizePolicy, QDialog, 
                              QLineEdit, QLabel, QCheckBox, QFormLayout, QComboBox,
