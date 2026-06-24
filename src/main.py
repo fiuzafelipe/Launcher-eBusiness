@@ -1,36 +1,33 @@
 import sys
 import os
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication
 
-# Configuração global do ambiente do Chromium (antes de qualquer import do PyQt6)
-global_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+# A MÁGICA DEFINITIVA: Usar o User-Agent do Firefox!
+# Isso impede que o Google procure por APIs exclusivas do Chrome e nos bloqueie.
+global_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0"
 
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
     "--disable-blink-features=AutomationControlled "
-    f"--user-agent=\"{global_ua}\" "
+    f"--user-agent=\"{global_ua}\""
 )
 
-from PyQt6.QtWidgets import QApplication
-
-# Garante que o Python encontre o diretório 'src' independentemente de onde o script é chamado
+# Caminhos do sistema
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-# Define a raiz do projeto (uma pasta acima de src/) para ajudar na busca de assets posteriormente
 PROJECT_ROOT = os.path.dirname(current_dir)
 os.environ["PROJECT_ROOT"] = PROJECT_ROOT 
 
-from ui.main_window import StandaloneHub
-
 def main():
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName("FiuzaStandaloneHub")
     app.setOrganizationName("FiuzaTechnology")
     
-    # Instancia a janela principal
+    from ui.main_window import StandaloneHub
     window = StandaloneHub()
-    
-    # Exibe a janela de forma explícita (ajuste se preferir showMaximized() ou showFullScreen())
     window.show() 
     
     sys.exit(app.exec())

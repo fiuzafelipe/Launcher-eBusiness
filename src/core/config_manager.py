@@ -11,20 +11,29 @@ class ConfigManager:
         # Lista padrão encapsulada no gerenciador de dados
         self.default_buttons = [
             {"label": "Contako", "subtitle": "Chat de atendimento", "url": "https://atendimento.contako.com.br/", "favorite": False},
-            {"label": "Tickets", "subtitle": "Ticket chamados", "url": "https://raphanet.confirm8.com/tickets", "favorite": False},
-            {"label": "Confirm8", "subtitle": "Novo chamado", "url": "https://raphanet.confirm8.com/tickets/new", "favorite": False},
-            {"label": "WhatsApp", "subtitle": "Mensagens Web", "url": "https://web.whatsapp.com/", "favorite": False},
-            {"label": "Ticket Socin", "subtitle": "Suporte Socin", "url": "https://socin.movidesk.com/", "favorite": False},
-            {"label": "Ticket Skyone", "subtitle": "Suporte Skyone", "url": "https://console.skyone.cloud/", "favorite": False},
-            {"label": "Google Keep", "subtitle": "Suas anotações", "url": "https://keep.google.com/", "favorite": False},
-            {"label": "AnyDesk / Remoto", "subtitle": "Acesso Remoto", "url": "remote://anydesk", "favorite": False}
+            {"label": "Confirm8", "subtitle": "Chamados", "url": "https://raphanet.confirm8.com/tickets", "favorite": False},
+            {"label": "Confirm8", "subtitle": "Abertura de chamados", "url": "https://raphanet.confirm8.com/tickets/new", "favorite": False},
+            {"label": "WhatsApp", "subtitle": "Rede social", "url": "https://web.whatsapp.com/", "favorite": False},
+            {"label": "Ticket Socin", "subtitle": "Abertura de Tickets", "url": "https://socin.movidesk.com/", "favorite": False},
+            {"label": "Ticket Skyone", "subtitle": "Abertura de Tickets", "url": "https://console.skyone.cloud/", "favorite": False},
+            {"label": "Google Keep", "subtitle": "Anotações do Keep", "url": "https://keep.google.com/", "favorite": False},
+            {"label": "BigData Wifi", "subtitle": "Chat Bigdata", "url": "https://chatbot.bigdatawifi.com.br/login", "favorite": False},
+            {"label": "Gmail", "subtitle": "Acesso email", "url": "https://gmail.com", "favorite": False},
+            {"label": "Ultraviewer", "subtitle": "Acesso remoto", "url": "remote://ultraviewer", "favorite": False},
+            {"label": "Anydesk", "subtitle": "Acesso remoto", "url": "remote://anydesk", "favorite": False},
+            {"label": "Teamviewer", "subtitle": "Acesso remoto", "url": "remote://teamviewer", "favorite": False},
+            {"label": "Youtube", "subtitle": "Streaming de Videos", "url": "https://youtube.com", "favorite": False},
+            {"label": "Notepad", "subtitle": "Anotações Raphanet", "url": "https://notepad.pw/raphanet", "favorite": False},
+            {"label": "Sefaz", "subtitle": "Portal Monitoramento", "url": "https://nfce.sefaz.se.gov.br/portal/painelMonitor.jsp", "favorite": False},
+            {"label": "Rentry", "subtitle": "Wiki Raphanet", "url": "https://rentry.org/raphanet", "favorite": False},
+            {"label": "Rocketseat", "subtitle": "Curso de Programação", "url": "https://app.rocketseat.com.br/?type=ALL", "favorite": False}
         ]
 
     def get_default_data(self):
         """Retorna a estrutura inicial padrão do sistema."""
         return {
-            "auto_save": False,
-            "save_tabs_enabled": False,
+            "auto_save": True,
+            "save_tabs_enabled": True,
             "theme_mode": "Escuro",
             "accent_color": "#d9d9d9",
             "theme_base_color": "#242120",
