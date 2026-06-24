@@ -1,10 +1,7 @@
 import sys
 import os
 
-# A MÁGICA DEFINITIVA NO NÚCLEO DO SISTEMA
-# Injetando o User-Agent globalmente via variável de ambiente, nós garantimos que 
-# até os Service Workers de segundo plano do Google usem a identidade correta,
-# eliminando completamente o bug do re-login!
+# Configuração global do ambiente do Chromium (antes de qualquer import do PyQt6)
 global_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
@@ -14,9 +11,14 @@ os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
 
 from PyQt6.QtWidgets import QApplication
 
+# Garante que o Python encontre o diretório 'src' independentemente de onde o script é chamado
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
+
+# Define a raiz do projeto (uma pasta acima de src/) para ajudar na busca de assets posteriormente
+PROJECT_ROOT = os.path.dirname(current_dir)
+os.environ["PROJECT_ROOT"] = PROJECT_ROOT 
 
 from ui.main_window import StandaloneHub
 
@@ -25,7 +27,12 @@ def main():
     app.setApplicationName("FiuzaStandaloneHub")
     app.setOrganizationName("FiuzaTechnology")
     
+    # Instancia a janela principal
     window = StandaloneHub()
+    
+    # Exibe a janela de forma explícita (ajuste se preferir showMaximized() ou showFullScreen())
+    window.show() 
+    
     sys.exit(app.exec())
 
 if __name__ == "__main__":
