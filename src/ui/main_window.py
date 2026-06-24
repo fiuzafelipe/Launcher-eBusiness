@@ -4,6 +4,7 @@ import json
 import gc
 import datetime
 import re
+from core.config_manager import ConfigManager
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QSpacerItem, QSizePolicy, QDialog, 
                              QLineEdit, QLabel, QCheckBox, QFormLayout, QComboBox,
@@ -112,6 +113,7 @@ class StandaloneHub(QMainWindow):
         self.resize(1280, 720)
         
         self.config_file = os.path.join(current_dir, "core", "config.json")
+        self.config_manager = ConfigManager(self.config_file)
         self.icons_dir = os.path.join(os.path.dirname(current_dir), "assets", "icons")
         os.makedirs(self.icons_dir, exist_ok=True)
         
@@ -1422,34 +1424,21 @@ class StandaloneHub(QMainWindow):
             json.dump(data, f, ensure_ascii=False, indent=4)
 
     def load_settings(self):
-        if os.path.exists(self.config_file):
-            try:
-                with open(self.config_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.auto_save = data.get("auto_save", False)
-                    self.save_tabs_enabled = data.get("save_tabs_enabled", False)
-                    self.theme_mode = data.get("theme_mode", "Escuro")
-                    self.accent_color = data.get("accent_color", "#d9d9d9")
-                    self.theme_base_color = data.get("theme_base_color", "#242120")
-                    self.background_image_path = data.get("background_image_path", "")
-                    self.buttons_list = data.get("buttons", self.default_buttons.copy())
-                    for b in self.buttons_list:
-                        if "favorite" not in b: b["favorite"] = False
-                    self.opened_tabs_urls = data.get("opened_tabs", [])
-                    self.pinned_tabs = data.get("pinned_tabs", [])
-                    self.zoom_settings = data.get("zoom_settings", {})
-                    self.security_settings = data.get("security", {})
-                    self.history_data = data.get("history", {})
-                    self.update_wallpaper_brightness()
-                    return
-            except: pass
-        self.theme_mode = "Escuro"
-        self.buttons_list = self.default_buttons.copy()
-        self.zoom_settings = {}
-        self.security_settings = {}
-        self.history_data = {}
-        self.pinned_tabs = []
-        self.update_wallpaper_brightness()
+    data = self.config_manager.load()
+    
+    self.auto_save = data.get("auto_save", False)
+    self.save_tabs_enabled = data.get("save_tabs_enabled", False)
+    self.theme_mode = data.get("theme_mode", "Escuro")
+    self.accent_color = data.get("accent_color", "#d9d9d9")
+    self.theme_base_color = data.get("theme_base_color", "#242120")
+    self.background_image_path = data.get("background_image_path", "")
+    self.buttons_list = data.get("buttons")
+    self.opened_tabs_urls = data.get("opened_tabs", [])
+    self.pinned_tabs = data.get("pinned_tabs", [])
+    self.zoom_settings = data.get("zoom_settings", {})
+    self.security_settings = data.get("security", {})
+    self.history_data = data.get("history", {})
+    self.update_wallpaper_brightness()
 
     def reset_to_defaults(self):
         self.buttons_list = self.default_buttons.copy()
