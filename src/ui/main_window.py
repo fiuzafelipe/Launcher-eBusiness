@@ -1,144 +1,246 @@
 import os
 import sys
+import shutil
 import gc
 import datetime
+import logging
 from core.config_manager import ConfigManager
+from ui.styles import get_main_stylesheet
+
+from ui.components import (CustomTabWidget, ThemeSelectorButton, FolderCableFrame,
+                           DraggableToolButton, LockScreenWidget)
+
+from ui.dialogs import (HistoryDialog, AboutDialog, DirectNavDialog)
+
+from ui.settings_dialogs import SettingsDialog
+
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QSizePolicy, QLineEdit, QLabel, QDialog,
                              QFileDialog, QMessageBox, QScrollArea, QMenu, QGraphicsBlurEffect,
-                             QStackedLayout)
+                             QStackedLayout, QApplication, QTabWidget)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import (QWebEngineProfile, QWebEnginePage, QWebEngineSettings, 
-                                   QWebEnginePermission, QWebEngineDownloadRequest)
+
+from PyQt6.QtWebEngineCore import (QWebEngineProfile, QWebEnginePage, QWebEngineSettings,
+                                   QWebEnginePermission, QWebEngineDownloadRequest,
+                                   QWebEngineScript, QWebEngineUrlRequestInterceptor)
 from PyQt6.QtCore import QUrl, Qt, QPoint, QTimer, QEvent, QPointF
-from PyQt6.QtGui import QColor, QImage, QShortcut, QKeySequence, QCursor, QPainter, QPainterPath, QPen
-
-# Importações dos módulos customizados organizados
-from ui.components import DraggableToolButton, CustomTabWidget, LockScreenWidget
-from ui.styles import get_main_stylesheet
-
-# Importações das janelas modais divididas e mapeadas corretamente
-from ui.dialogs import (SecuritySetupDialog, SecurityModifyDialog, HistoryDialog, 
-                        AboutDialog, ToolboxDialog, EditButtonDialog, DeleteToolboxDialog)
-from ui.settings_dialogs import SettingsDialog
+from PyQt6.QtGui import QColor, QImage, QShortcut, QKeySequence, QCursor, QPainter, QPainterPath, QPen, QIcon
 
 current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-class CableNetworkWidget(QWidget):
-    def __init__(self, parent_hub, parent=None):
-        super().__init__(parent)
-        self.parent_hub = parent_hub
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet("background: transparent; border-image: none;")
-        self.dash_offset = 0
-        self.anim_timer = QTimer(self)
-        self.anim_timer.timeout.connect(self.update_animation)
-        self.anim_timer.start(40) 
+class HomePanelAdapter(QWidget):
 
-    def update_animation(self):
-        self.dash_offset = (self.dash_offset - 1) % 15 
-        self.update()
+    def __init__(self, hub):
+        super().__init__()
+        self.hub = hub
 
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        layout = self.parent_hub.grid_layout
-        if not layout or layout.count() < 2: return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        accent_color = QColor(self.parent_hub.accent_color)
-        centers = []
-        for i in range(layout.count()):
-            item = layout.itemAt(i)
-            if item and item.widget() and item.widget().isVisible():
-                w = item.widget()
-                pos = w.mapTo(self, QPoint(w.width()//2, w.height()//2))
-                centers.append(pos)
-        
-        if len(centers) < 2:
-            painter.end()
-            return
+class HeaderInterceptor(QWebEngineUrlRequestInterceptor):
+    def interceptRequest(self, info):
 
-        cable_color = QColor(10, 10, 15, 160) 
-        base_pen = QPen(cable_color, 6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-        pulse_pen = QPen(accent_color, 2, Qt.PenStyle.CustomDashLine, Qt.PenCapStyle.RoundCap)
-        pulse_pen.setDashPattern([5, 10]) 
-        pulse_pen.setDashOffset(self.dash_offset)
-        
-        for i in range(len(centers)-1):
-            p1 = QPointF(centers[i])
-            p2 = QPointF(centers[i+1])
-            path = QPainterPath()
-            path.moveTo(p1)
-            if abs(p1.y() - p2.y()) < 20: 
-                cp1 = QPointF(p1.x() + (p2.x() - p1.x()) / 3, p1.y() + 60)
-                cp2 = QPointF(p2.x() - (p2.x() - p1.x()) / 3, p2.y() + 60)
-            else:
-                cp1 = QPointF(p1.x() + 100, p1.y() + 80)
-                cp2 = QPointF(p2.x() - 100, p2.y() - 80)
-            path.cubicTo(cp1, cp2, p2)
-            painter.setPen(base_pen)
-            painter.drawPath(path)
-            painter.setPen(pulse_pen)
-            painter.drawPath(path)
-        painter.end()
+        info.setHttpHeader(
+            b"Accept-Language",
+            b"pt-BR,pt;q=0.9,en-US;q=0.8"
+        )
 
+        info.setHttpHeader(
+            b"sec-ch-ua-platform",
+            b'"Windows"'
+        )
 
 class StandaloneHub(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Fiuza Standalone Hub v1.0")
+        # Agora o StandaloneHub conseguirá enxergar 'current_dir'
+        self.config_file = os.path.join(current_dir, "core", "config.json")
+        self.setWindowTitle("Custom Explorer")
         self.resize(1280, 720)
         
+        # Inicialização de caminhos e configs (ORDEM CORRETA)
         self.config_file = os.path.join(current_dir, "core", "config.json")
         self.config_manager = ConfigManager(self.config_file)
         self.icons_dir = os.path.join(os.path.dirname(current_dir), "assets", "icons")
         os.makedirs(self.icons_dir, exist_ok=True)
         
-        self.presets = {
-            "Padrão (preto/branco)": {"theme": "#242120", "accent": "#d9d9d9"},
-            "Verde": {"theme": "#0f2419", "accent": "#12d97c"},
-            "Vermelho": {"theme": "#270d0d", "accent": "#d91e10"},
-            "Azul Claro": {"theme": "#0d2721", "accent": "#0dd9a6"},
-            "Azul Escuro": {"theme": "#0d0d27", "accent": "#0d0dd9"},
-            "Laranja": {"theme": "#271a0c", "accent": "#d9790c"},
-            "Amarelo": {"theme": "#27270c", "accent": "#d9d9d9"},
-            "Roxo Claro": {"theme": "#270d27", "accent": "#d90ccf"},
-            "Rosa": {"theme": "#270d14", "accent": "#d90c3c"},
-            "Branco": {"theme": "#d6dcd1", "accent": "#ffffff"}
-        }
-        
-        self.current_page = 0
-        self.items_per_page = 8
-        self.is_restoring = False  
-        self.search_filter = ""
-        self.is_wp_light = False 
-        
-        self.load_settings()
+        # ============================================================
+        # CUSTOM EXPLORER - GOOGLE SESSION ENGINE
+        # ============================================================
 
-        app_data = os.getenv('LOCALAPPDATA')
-        self.storage_path = os.path.join(app_data, "FiuzaTechnology", "StandaloneHub", "BrowserSession")
-        os.makedirs(self.storage_path, exist_ok=True)
+        app_data = os.getenv("LOCALAPPDATA")
 
-        self.profile = QWebEngineProfile("FiuzaProfile", self)
-        self.profile.setPersistentStoragePath(self.storage_path)
-        self.profile.setCachePath(self.storage_path)
-        self.profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
-        self.profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
-        self.profile.setHttpCacheMaximumSize(104857600) 
-        self.profile.downloadRequested.connect(self.handle_download_request)
+        self.old_storage_path = os.path.join(
+            app_data,
+            "FiuzaTechnology",
+            "StandaloneHub",
+            "BrowserSession"
+        )
+
+        self.storage_path = os.path.join(
+            app_data,
+            "FiuzaTechnology",
+            "CustomExplorer",
+            "BrowserSession"
+        )
+
+        # Migração automática da sessão antiga
+        if os.path.exists(self.old_storage_path) and not os.path.exists(self.storage_path):
+
+            try:
+                os.makedirs(
+                    os.path.dirname(self.storage_path),
+                    exist_ok=True
+                )
+
+                shutil.copytree(
+                    self.old_storage_path,
+                    self.storage_path
+                )
+
+                print("[SESSION] Sessão antiga migrada para Custom Explorer")
+
+            except Exception as e:
+                print("[SESSION MIGRATION ERROR]", e)
+
+        os.makedirs(
+            self.storage_path,
+            exist_ok=True
+        )
+
+        # ==========================================================
+        # PERSISTÊNCIA REAL GOOGLE / YOUTUBE
+        # ==========================================================
+
+        self.profile = QWebEngineProfile(
+            "CustomExplorer",
+            self
+        )
+
+        # usa a pasta correta persistente
+        self.profile.setPersistentStoragePath(
+            self.storage_path
+        )
+
+        self.profile.setCachePath(
+            os.path.join(
+                self.storage_path,
+                "cache"
+            )
+        )
+
+        # Mantém login Google
+        self.profile.setPersistentCookiesPolicy(
+            QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+        )
+
+        # Permissões
+        self.profile.setPersistentPermissionsPolicy(
+            QWebEngineProfile.PersistentPermissionsPolicy.StoreOnDisk
+        )
+
+        # Cache Chromium
+        self.profile.setHttpCacheType(
+            QWebEngineProfile.HttpCacheType.DiskHttpCache
+        )
+
+        self.profile.setHttpUserAgent(
+            QWebEngineProfile.defaultProfile().httpUserAgent()
+        )
+
+        self.profile.setHttpAcceptLanguage(
+            "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
+        )
         
+        self.interceptor = HeaderInterceptor()
+        
+        self.profile.setUrlRequestInterceptor(
+            self.interceptor
+        )
+
+        # Segurança Web
         settings = self.profile.settings()
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
         
-        # Deixaremos o motor base (main.py) injetar o Firefox sozinho.
-        self.profile.setHttpAcceptLanguage("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture,
+            False
+        )
 
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.FullScreenSupportEnabled,
+            True
+        )
+
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.ErrorPageEnabled,
+            True
+        )
+
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.JavascriptEnabled,
+            True
+        )
+
+        settings.setAttribute(
+           QWebEngineSettings.WebAttribute.LocalStorageEnabled,
+           True
+        )
+
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.WebGLEnabled,
+            True
+        )
+
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled,
+            True
+        )
+
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.WebRTCPublicInterfacesOnly,
+            True
+        )
+
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard,
+            True
+        )
+
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript,
+            True
+        )
+
+        print(
+            "[SESSION] Custom Explorer profile persistente carregado:",
+            self.storage_path
+        )
+        
+        # Configurações de Navegador
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.WebRTCPublicInterfacesOnly, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript, True)
+
+        # --- RESTANTE DO SEU INIT ORIGINAL ---
+        self.presets = {"Padrão (preto/branco)": {"theme": "#242120", "accent": "#d9d9d9"}, "Verde": {"theme": "#0f2419", "accent": "#12d97c"}, "Vermelho": {"theme": "#270d0d", "accent": "#d91e10"}, "Azul Claro": {"theme": "#0d2721", "accent": "#0dd9a6"}, "Azul Escuro": {"theme": "#0d0d27", "accent": "#0d0dd9"}, "Laranja": {"theme": "#271a0c", "accent": "#d9790c"}, "Amarelo": {"theme": "#27270c", "accent": "#d9d9d9"}, "Roxo Claro": {"theme": "#270d27", "accent": "#d90ccf"}, "Rosa": {"theme": "#270d14", "accent": "#d90c3c"}, "Branco": {"theme": "#d6dcd1", "accent": "#ffffff"}}
+        self.current_page, self.items_per_page, self.is_restoring, self.search_filter, self.is_wp_light = 0, 8, False, "", False
+        self.load_settings()
+        
+        # aplica ícone salvo
+        try:
+            icon_path = os.path.join(
+                current_dir,
+                "assets",
+                self.app_icon
+            )
+
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
+
+        except Exception as e:
+            print("[ICON ERROR]", e)
+        
         self.central_widget = QWidget()
         self.central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(self.central_widget)
@@ -199,13 +301,20 @@ class StandaloneHub(QMainWindow):
         self.bottom_bar.setContentsMargins(15, 5, 15, 10)
         
         self.lbl_status = QLabel("")
+        
         self.btn_save_session = QPushButton("Save")
         self.btn_save_session.setFixedSize(100, 30)
         self.btn_save_session.clicked.connect(self.trigger_save_tabs_button)
         
         self.bottom_bar.addWidget(self.lbl_status)
-        self.bottom_bar.addStretch()
+        self.bottom_bar.addStretch() 
+        
+        self.theme_btn = ThemeSelectorButton(self) 
+        self.bottom_bar.addWidget(self.theme_btn) 
+        
+        self.bottom_bar.addStretch() 
         self.bottom_bar.addWidget(self.btn_save_session)
+        
         self.main_layout.addWidget(self.bottom_bar_widget)
         
         self.create_home_tab()
@@ -228,8 +337,170 @@ class StandaloneHub(QMainWindow):
         self.shortcut_esc.activated.connect(self.safe_close_search)
 
         self.showMaximized()
-        if self.security_settings and self.security_settings.get("enabled", False):
+        if getattr(self, 'security_settings', {}) and self.security_settings.get("enabled", False):
             self.show_lock_screen()
+
+    def force_clean_session(self):
+
+        try:
+
+            self.profile.cookieStore().deleteAllCookies()
+
+            self.profile.clearHttpCache()
+
+            self.profile.clearAllVisitedLinks()
+
+
+            print(
+                "[SESSION] Cookies removidos"
+            )
+
+
+        except Exception as e:
+
+            print(
+                "[SESSION CLEAN ERROR]",
+                e
+            )
+
+    def logout_google(self):
+
+        try:
+
+            for i in range(1, self.tabs.count()):
+
+                browser = self.tabs.widget(i)
+
+                if isinstance(browser, QWebEngineView):
+
+                    browser.setUrl(
+                        QUrl(
+                            "https://accounts.google.com/Logout"
+                        )
+                    )
+
+                    break
+
+
+            QTimer.singleShot(
+                5000,
+                self.reload_browser_session
+            )
+
+
+            QMessageBox.information(
+                self,
+                "Logout Google",
+                "Conta Google desconectada."
+            )
+
+            print("[GOOGLE] Logout realizado")
+
+        except Exception as e:
+
+            print("[LOGOUT ERROR]", e)
+
+    def reload_browser_session(self):
+
+        """
+        Recarrega perfil Chromium sem fechar programa
+        """
+
+        try:
+
+            for i in range(1, self.tabs.count()):
+
+                widget = self.tabs.widget(i)
+
+                if isinstance(widget, QWebEngineView):
+
+                    widget.reload()
+
+
+            print("[SESSION] Relogin preparado")
+
+
+        except Exception as e:
+
+            print("[RELOGIN ERROR]", e)
+
+    def clear_google_storage(self):
+
+        """
+        Limpa completamente a sessão Google/Chromium
+        Remove:
+        - Cookies
+        - Cache
+        - LocalStorage
+        - IndexedDB
+        - Sessões salvas
+        - Permissões
+        """
+
+        reply = QMessageBox.question(
+            self,
+            "Limpar sessão Google",
+            "Isso removerá todos os logins salvos do navegador.\n\n"
+            "Deseja continuar?",
+            QMessageBox.StandardButton.Yes |
+            QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+
+            print("[SESSION] Iniciando limpeza...")
+
+            # Remove cookies
+            self.profile.cookieStore().deleteAllCookies()
+
+            # Limpa cache Chromium
+            self.profile.clearHttpCache()
+
+            # Limpa histórico
+            self.profile.clearAllVisitedLinks()
+
+            # Remove storage completo
+            if os.path.exists(self.storage_path):
+
+                shutil.rmtree(
+                    self.storage_path,
+                    ignore_errors=True
+                )
+
+            # Recria pasta limpa
+
+            os.makedirs(
+                self.storage_path,
+                exist_ok=True
+            )
+
+            QMessageBox.information(
+                self,
+                "Sessão limpa",
+                "Dados Google removidos com sucesso.\n\n"
+                "Reinicie o Custom Explorer."
+            )
+
+            print(
+                "[SESSION] Storage Google resetado"
+            )
+
+        except Exception as e:
+
+            QMessageBox.warning(
+                self,
+                "Erro",
+                str(e)
+            )
+
+            print(
+                "[CLEAR SESSION ERROR]",
+                e
+            )
 
     def show_tab_context_menu(self, pos):
         index = self.tabs.tabBar().tabAt(pos)
@@ -272,14 +543,30 @@ class StandaloneHub(QMainWindow):
         if self.tabs.currentIndex() == 0:
             menu = QMenu(self)
             menu.setStyleSheet(f"QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; padding: 5px; }} QMenu::item {{ padding: 8px 25px; border-radius: 4px; }} QMenu::item:selected {{ background-color: {self.accent_color}; color: #000; }}")
+            
             history_action = menu.addAction("🕒 Histórico")
+            folder_action = menu.addAction("📁 Criar Pasta")
             lock_action = menu.addAction("🔒 Trancar Tela") if self.security_settings.get("enabled", False) else None
+            
             action = menu.exec(self.mapToGlobal(event.pos()))
             
-            if action == history_action: HistoryDialog(self).exec()
-            elif lock_action and action == lock_action: self.show_lock_screen()
+            if action == history_action:
+                HistoryDialog(self).exec()
+            elif action == folder_action:
+                from ui.folder_dialogs import CreateFolderDialog
+                CreateFolderDialog(self).exec()
+            elif lock_action and action == lock_action:
+                self.show_lock_screen()
         else:
             super().contextMenuEvent(event)
+
+    def open_security_modify(self):
+        from ui.dialogs import SecurityModifyDialog
+        dialog = SecurityModifyDialog(self, self.security_settings)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.security_settings = dialog.security_data
+            self.save_settings(force=True)
+            QMessageBox.information(self, "Sucesso", "Configurações de segurança atualizadas!")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -398,14 +685,55 @@ class StandaloneHub(QMainWindow):
         return super().eventFilter(obj, event)
 
     def delete_button_by_data(self, item_data):
-        self.buttons_list.remove(item_data)
-        icon_path = os.path.join(self.icons_dir, f"{item_data['label'].lower()}.png")
-        if os.path.exists(icon_path):
-            try: os.remove(icon_path)
-            except: pass
+        from PyQt6.QtWidgets import QApplication
+        from ui.components import FolderPanelWidget
+        
+        if item_data in getattr(self, 'buttons_list', []):
+            self.buttons_list.remove(item_data)
+            
+        if item_data in getattr(self, 'folders_list', []):
+            self.folders_list.remove(item_data)
+        
+        for folder in getattr(self, 'folders_list', []):
+            if item_data in folder.get("buttons", []):
+                folder["buttons"].remove(item_data)
+        
+        lbl_name = item_data.get('label', '').lower()
+        paths_to_check = [
+            os.path.join(self.icons_dir, f"{lbl_name}.png"),
+            os.path.join(self.icons_dir, f"folder_{lbl_name}.png")
+        ]
+        
+        for path in paths_to_check:
+            if os.path.exists(path):
+                try: os.remove(path)
+                except: pass
+                
         self.save_settings(force=True)
         self.filter_buttons_by_search(self.search_filter)
-        self.update_favorites_panel()
+        
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, FolderPanelWidget):
+                widget.refresh_grid()
+
+    def edit_button_dialog(self, item_data):
+        if item_data.get("type") == "folder":
+            from ui.folder_dialogs import CreateFolderDialog
+            dialog = CreateFolderDialog(self, folder_data=item_data)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.save_settings(force=True)
+                self.filter_buttons_by_search(self.search_filter)
+        else:
+            from ui.dialogs import EditButtonDialog
+            EditButtonDialog(self, item_data).exec()
+            self.filter_buttons_by_search(self.search_filter)
+
+    def edit_folder_dialog(self, folder_data):
+        from ui.dialogs import EditFolderDialog 
+        dialog = EditFolderDialog(self, folder_data)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.save_settings(force=True)
+            self.filter_buttons_by_search(self.search_filter)
 
     def handle_permission_request(self, request: QWebEnginePermission): request.grant()
 
@@ -457,7 +785,19 @@ class StandaloneHub(QMainWindow):
         self.fav_area_layout.addWidget(self.fav_panel_widget) 
         home_vertical_layout.addWidget(self.fav_area)
         
-        self.grid_container_widget = CableNetworkWidget(self)
+        self.home_panel_adapter = HomePanelAdapter(self)
+
+        self.grid_container_widget = FolderCableFrame(
+            self.home_panel_adapter
+        )
+        self.grid_container_widget.setStyleSheet(
+            """
+            QWidget {
+                border: none;
+                background: transparent;
+            }
+            """
+        )
         content_layout = QVBoxLayout(self.grid_container_widget)
         content_layout.setContentsMargins(40, 15, 40, 25)
         control_panel_layout = QVBoxLayout()
@@ -465,6 +805,7 @@ class StandaloneHub(QMainWindow):
         
         has_wp = hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path)
         text_color = "#111111" if getattr(self, 'is_wp_light', False) else "#f5f5f5"
+        self.current_text_color = text_color # Guarda para atualizar a cor do botão depois
         c_accent = QColor(self.accent_color)
         c_theme = QColor(self.get_active_theme_color())
         
@@ -485,15 +826,17 @@ class StandaloneHub(QMainWindow):
         btn_config_menu.clicked.connect(lambda: SettingsDialog(self).exec())
         
         self.search_bar = QLineEdit()
+        self.theme_search_box = self.search_bar
         self.search_bar.setFixedSize(450, 42)
         self.search_bar.setPlaceholderText("Digite aqui o botão que deseja acessar...")
         self.search_bar.setText(self.search_filter)
         self.search_bar.textChanged.connect(self.filter_buttons_by_search)
-        self.search_bar.setStyleSheet(f"QLineEdit {{ background-color: {input_bg}; border: 1px solid rgba(0, 0, 0, 0.6); border-radius: 6px; color: {input_text}; font-family: 'Segoe UI'; font-size: 13px; font-weight: {font_weight}; padding-left: 15px; padding-right: 15px; }} QLineEdit:focus {{ border: 2px solid {self.accent_color}; }}")
+        self.search_bar.setStyleSheet(f"QLineEdit {{ background-color: {input_bg}; border: 1px solid {self.accent_color}; border-radius: 6px; color: {input_text}; font-family: 'Segoe UI'; font-size: 13px; font-weight: {font_weight}; padding-left: 15px; padding-right: 15px; }} QLineEdit:focus {{ border: 2px solid {self.accent_color}; }}")
         
         control_panel_layout.addWidget(btn_ops, alignment=Qt.AlignmentFlag.AlignCenter)
         control_panel_layout.addWidget(btn_config_menu, alignment=Qt.AlignmentFlag.AlignCenter)
         control_panel_layout.addWidget(self.search_bar, alignment=Qt.AlignmentFlag.AlignCenter)
+        
         content_layout.addLayout(control_panel_layout)
         content_layout.addSpacing(20)
 
@@ -519,7 +862,26 @@ class StandaloneHub(QMainWindow):
         self.page_label = QLabel(f"Página {self.current_page + 1}")
         self.page_label.setFixedWidth(80) 
         self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.page_label.setStyleSheet(f"color: {page_color}; font-weight: {font_weight}; font-size: 14px; font-family: 'Segoe UI'; background: transparent;")
+        self.page_label.setStyleSheet(
+            f"""
+            color:
+            {page_color};
+
+            font-weight:
+            {font_weight};
+
+            font-size:
+            14px;
+
+            font-family:
+            'Segoe UI';
+
+            background:
+            transparent;
+            """
+        )
+
+        self.theme_page_label = self.page_label
         
         self.btn_next_page = QPushButton(">")
         self.btn_next_page.setFixedSize(60, 40)
@@ -561,14 +923,33 @@ class StandaloneHub(QMainWindow):
         self.fav_search_bar.setStyleSheet(f"QLineEdit {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.25); border: 1px solid {accent}; border-radius: 4px; color: {text_search_fav}; font-family: 'Segoe UI'; font-size: 12px; font-weight: bold; padding: 0 5px; }}")
         
         strong_line, faint_line = f"2px solid {accent}", f"1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.50)"
-        
+
         if has_wp:
+
             main_bg_style = f"border-image: url('{self.background_image_path.replace('\\', '/')}') 0 0 0 0 stretch stretch;"
+
             tab_text_color = "#1a1a1a" if is_bg_light else "#e0e0e0"
-            tabbar_bg = "rgba(255, 255, 255, 0.35)" if is_bg_light else "rgba(0, 0, 0, 0.35)"
-            tab_inactive_bg = "rgba(255, 255, 255, 0.15)" if is_bg_light else "rgba(0, 0, 0, 0.15)"
-            tab_active_bg = "rgba(255, 255, 255, 0.85)" if is_bg_light else "rgba(20, 20, 20, 0.85)"
-            pane_bg, btn_ops_bg, btn_ops_hover_bg, btn_ops_hover_text, text_color, font_weight, bottom_bar_bg = "transparent", f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.5)", accent, "#07080a", "#111111" if is_bg_light else "#f5f5f5", "600", f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.5)"
+
+            tabbar_bg = "rgba(255,255,255,0.35)" if is_bg_light else "rgba(0,0,0,0.35)"
+
+            tab_inactive_bg = "rgba(255,255,255,0.15)" if is_bg_light else "rgba(0,0,0,0.15)"
+
+            tab_active_bg = "rgba(255,255,255,0.85)" if is_bg_light else "rgba(20,20,20,0.85)"
+
+            pane_bg = "transparent"
+
+            btn_ops_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()},0.65)"
+
+            btn_ops_hover_bg = accent
+
+            btn_ops_hover_text = "#07080a"
+
+            text_color = "#111111" if is_bg_light else "#f5f5f5"
+
+            font_weight = "600"
+
+            bottom_bar_bg = "transparent"
+            
         else:
             solid_text_color = "#07080a" if is_light_theme else "#ffffff"
             top_bar_bg_solid = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(30, c_theme.lightness() - 12)).name() if is_light_theme else QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(5, c_theme.lightness() - 8)).name()
@@ -578,18 +959,153 @@ class StandaloneHub(QMainWindow):
         self.lbl_status.setStyleSheet(f"color: {text_color}; font-family: 'Segoe UI'; font-weight: {font_weight}; font-size: 13px; background: transparent;")
         self.setStyleSheet(get_main_stylesheet(accent, main_bg, strong_line, faint_line, tabbar_bg, tab_inactive_bg, tab_active_bg, pane_bg, btn_ops_bg, btn_ops_hover_bg, btn_ops_hover_text, text_color, font_weight, bottom_bar_bg, main_bg_style))
         self.update_save_tabs_button_visual()
+        # atualiza caixa de pesquisa conforme tema
+        if hasattr(self, "theme_search_box"):
+
+            self.theme_search_box.setStyleSheet(
+                f"""
+                QLineEdit {{
+                    background-color:
+                    rgba(
+                    {c_accent.red()},
+                    {c_accent.green()},
+                    {c_accent.blue()},
+                    0.35);
+
+                    border:
+                    1px solid {accent};
+
+                    border-radius:6px;
+
+                    color:{text_color};
+
+                    font-family:'Segoe UI';
+
+                    font-size:13px;
+
+                    font-weight:bold;
+
+                    padding-left:15px;
+                }}
+
+                QLineEdit:focus {{
+                    border:
+                    2px solid {accent};
+                }}
+                """
+            )
+
+        # atualiza navegação < >
+        if hasattr(self, "btn_prev_page"):
+
+            nav_style = f"""
+            QPushButton {{
+
+                background-color: {accent};
+
+                border:
+                1px solid #000000;
+
+                color:
+                #07080a;
+
+                font-weight:
+                bold;
+
+                font-size:
+                15px;
+
+                border-radius:
+                5px;
+            }}
+
+            QPushButton:hover {{
+
+                background-color:
+                rgba(
+                {c_accent.red()},
+                {c_accent.green()},
+                {c_accent.blue()},
+                0.40);
+
+                color:
+                {accent};
+
+                border-color:
+                {accent};
+            }}
+
+            QPushButton:disabled {{
+
+                border:
+                1px solid rgba(0,0,0,0.1);
+
+                color:
+                rgba(120,120,120,0.5);
+
+                background-color:
+                rgba(0,0,0,0.15);
+            }}
+            """
+
+            self.btn_prev_page.setStyleSheet(
+                nav_style
+            )
+
+            self.btn_next_page.setStyleSheet(
+                nav_style
+            )
+
         self.sync_all_whatsapp_themes()
 
     def update_save_tabs_button_visual(self):
+
         accent = self.accent_color
-        btn_bg_off = f"rgba({QColor(accent).red()}, {QColor(accent).green()}, {QColor(accent).blue()}, 0.5)" if hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path) else "#161b24"
-        text_col = ("#111111" if getattr(self, 'is_wp_light', False) else "#f5f5f5") if hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path) else "#8a909d"
-        
-        if self.save_tabs_enabled:
-            self.btn_save_session.setStyleSheet(f"QPushButton {{ background-color: {accent}; border: 1px solid #000000; color: #07080a; font-family: 'Segoe UI'; font-weight: bold; border-radius: 4px; }}")
-            self.lbl_status.setText("Save abas ativado.")
+
+        if hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path):
+
+            bg = f"rgba({QColor(accent).red()}, {QColor(accent).green()}, {QColor(accent).blue()},0.55)"
+
         else:
-            self.btn_save_session.setStyleSheet(f"QPushButton {{ background-color: {btn_bg_off}; border: 1px solid rgba(0,0,0,0.5); color: {text_col}; font-family: 'Segoe UI'; font-weight: 600; border-radius: 4px; }} QPushButton:hover {{ background-color: {accent}; border-color: #000000; color: #07080a; }}")
+
+            bg = accent
+
+        if self.save_tabs_enabled:
+
+            self.btn_save_session.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background-color: {accent};
+                    border: 1px solid #000000;
+                    color:#07080a;
+                    font-weight:bold;
+                    border-radius:4px;
+                }}
+                """
+            )
+
+            self.lbl_status.setText("Save abas ativado.")
+
+
+        else:
+
+            self.btn_save_session.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background-color:{bg};
+                    border:1px solid {accent};
+                    color:#ffffff;
+                    font-weight:bold;
+                    border-radius:4px;
+                }}
+
+                QPushButton:hover {{
+                    background-color:{accent};
+                    color:#07080a;
+                }}
+                """
+            )
+
             self.lbl_status.setText("")
 
     def trigger_save_tabs_button(self):
@@ -609,24 +1125,32 @@ class StandaloneHub(QMainWindow):
     def filter_buttons_by_search(self, text):
         self.search_filter = text
         filtered_list = [b for b in self.buttons_list if self.search_filter.strip().lower() in b["label"].lower()]
-        while self.grid_layout.count():
-            child = self.grid_layout.takeAt(0)
-            if child.widget(): child.widget().deleteLater()
-                
-        page_items = filtered_list[self.current_page * self.items_per_page : (self.current_page * self.items_per_page) + self.items_per_page]
-        row, col = 0, 0
-        for item in page_items:
-            btn = DraggableToolButton(item_data=item, item_index=self.buttons_list.index(item), parent_hub=self)
-            btn.setFixedSize(220, 145)
-            self.grid_layout.addWidget(btn, row, col)
-            col += 1
-            if col > 3: col, row = 0, row + 1
-                
+        self.render_grid(self.grid_layout, filtered_list)
+        
         max_pages = max(0, (len(filtered_list) - 1) // self.items_per_page)
         if hasattr(self, 'btn_next_page'):
             self.btn_next_page.setEnabled(self.current_page < max_pages)
             self.btn_prev_page.setEnabled(self.current_page > 0)
             self.page_label.setText(f"Página {self.current_page + 1}")
+
+    def render_grid(self, layout, items):
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget(): child.widget().deleteLater()
+                
+        all_items = items
+        if layout == self.grid_layout:
+            all_items = items + getattr(self, 'folders_list', [])
+        
+        page_items = all_items[self.current_page * self.items_per_page : (self.current_page * self.items_per_page) + self.items_per_page] if layout == self.grid_layout else all_items
+        
+        row, col = 0, 0
+        for item in page_items:
+            btn = DraggableToolButton(item_data=item, item_index=all_items.index(item), parent_hub=self)
+            btn.setFixedSize(220, 145)
+            layout.addWidget(btn, row, col)
+            col += 1
+            if col > 3: col, row = 0, row + 1
 
     def log_history(self, label, url):
         date_str, time_str = datetime.datetime.now().strftime("%Y-%m-%d"), datetime.datetime.now().strftime("%H:%M")
@@ -637,30 +1161,60 @@ class StandaloneHub(QMainWindow):
 
     def load_settings(self):
         data = self.config_manager.load()
+        self.buttons_list = data.get("buttons", [])
+        self.folders_list = data.get("folders", [])
         self.auto_save, self.save_tabs_enabled = data.get("auto_save", False), data.get("save_tabs_enabled", False)
         self.theme_mode, self.accent_color, self.theme_base_color = data.get("theme_mode", "Escuro"), data.get("accent_color", "#d9d9d9"), data.get("theme_base_color", "#242120")
+        
+        self.app_icon = data.get("app_icon", "Custom Transparent.ico")
+        
         self.background_image_path = data.get("background_image_path", "")
-        self.buttons_list = data.get("buttons")
         self.opened_tabs_urls, self.pinned_tabs = data.get("opened_tabs", []), data.get("pinned_tabs", [])
         self.zoom_settings, self.security_settings, self.history_data = data.get("zoom_settings", {}), data.get("security", {}), data.get("history", {})
         self.update_wallpaper_brightness()
 
     def save_settings(self, force=False):
-        if getattr(self, 'is_restoring', False) or (not getattr(self, 'auto_save', False) and not force): return
+        if getattr(self, 'is_restoring', False) or (not getattr(self, 'auto_save', False) and not force): 
+            return
+        
         self.track_zoom_levels()
         pinned, urls = [], []
+        
         if hasattr(self, 'tabs'):
             for i in range(1, self.tabs.count()):
                 widget = self.tabs.widget(i)
                 if isinstance(widget, QWebEngineView):
                     url = widget.property("original_url") or widget.url().toString()
                     label = widget.property("original_label") or self.tabs.tabText(i).replace("📌 ", "")
-                    pinned.append({"label": label, "url": url}) if widget.property("is_pinned") else (urls.append({"label": label, "url": url}) if self.save_tabs_enabled else None)
+                    if widget.property("is_pinned"):
+                        pinned.append({"label": label, "url": url})
+                    elif self.save_tabs_enabled:
+                        urls.append({"label": label, "url": url})
+            
             self.pinned_tabs, self.opened_tabs_urls = pinned, urls
-        self.config_manager.save({"auto_save": getattr(self, 'auto_save', False), "save_tabs_enabled": getattr(self, 'save_tabs_enabled', False), "theme_mode": getattr(self, 'theme_mode', 'Escuro'), "accent_color": getattr(self, 'accent_color', '#d9d9d9'), "theme_base_color": getattr(self, 'theme_base_color', '#242120'), "background_image_path": getattr(self, 'background_image_path', ''), "buttons": getattr(self, 'buttons_list', []), "opened_tabs": getattr(self, 'opened_tabs_urls', []), "pinned_tabs": getattr(self, 'pinned_tabs', []), "zoom_settings": getattr(self, 'zoom_settings', {}), "security": getattr(self, 'security_settings', {}), "history": getattr(self, 'history_data', {})})
+
+        self.config_manager.save({
+            "auto_save": getattr(self, 'auto_save', False),
+            "save_tabs_enabled": getattr(self, 'save_tabs_enabled', False),
+            "theme_mode": getattr(self, 'theme_mode', 'Escuro'),
+            "accent_color": getattr(self, 'accent_color', '#d9d9d9'),
+            "theme_base_color": getattr(self, 'theme_base_color', '#242120'),
+            
+            "app_icon": getattr(self, 'app_icon', 'Custom Transparent.ico'),
+            
+            "background_image_path": getattr(self, 'background_image_path', ''),
+            "buttons": getattr(self, 'buttons_list', []),
+            "folders": getattr(self, 'folders_list', []),  
+            "opened_tabs": getattr(self, 'opened_tabs_urls', []),
+            "pinned_tabs": getattr(self, 'pinned_tabs', []),
+            "zoom_settings": getattr(self, 'zoom_settings', {}),
+            "security": getattr(self, 'security_settings', {}),
+            "history": getattr(self, 'history_data', {})
+        })
 
     def reset_to_defaults(self):
         self.buttons_list, self.accent_color, self.theme_base_color, self.theme_mode, self.background_image_path, self.is_wp_light, self.current_page, self.auto_save, self.save_tabs_enabled, self.opened_tabs_urls, self.pinned_tabs, self.zoom_settings, self.security_settings, self.history_data = self.config_manager.default_buttons.copy(), self.presets["Padrão (preto/branco)"]["accent"], self.presets["Padrão (preto/branco)"]["theme"], "Escuro", "", False, 0, False, False, [], [], {}, {}, {}
+        self.app_icon = "Custom Transparent.ico"
         self.config_manager.delete_config_file()
         self.apply_styles()
         self.create_home_tab()
@@ -676,9 +1230,21 @@ class StandaloneHub(QMainWindow):
             
         browser = QWebEngineView(self)
         
-        # AQUI VOLTA A USAR O SEU PERFIL
+        browser.loadStarted.connect(lambda: print(f"[DEBUG] Iniciando carregamento: {url}"))
+        browser.loadFinished.connect(lambda ok: print(f"[DEBUG] Carregamento concluído. Sucesso: {ok}"))
+        
         page = QWebEnginePage(self.profile, browser)
+
         browser.setPage(page)
+
+        if "whatsapp.com" in url:
+
+            page.profile().setHttpUserAgent(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
         
         browser.setProperty("original_url", url)
         browser.setProperty("original_label", title)
@@ -728,6 +1294,18 @@ class StandaloneHub(QMainWindow):
             if isinstance(widget, QWebEngineView):
                 url = widget.property("original_url") or widget.url().toString()
                 if url and url != "about:blank": self.zoom_settings[url] = widget.zoomFactor()
+
+    def open_security_setup(self):
+        from ui.dialogs import SecuritySetupDialog, SecurityModifyDialog
+        
+        if getattr(self, 'security_settings', {}) and self.security_settings.get("enabled", False):
+            dialog = SecurityModifyDialog(self, self.security_settings)
+        else:
+            dialog = SecuritySetupDialog(self, self.security_settings)
+            
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.security_settings = dialog.final_data
+            self.save_settings(force=True)
 
     def close_tab(self, index):
         if index != 0:

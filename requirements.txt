@@ -24,3 +24,4 @@ setuptools==82.0.1
 soupsieve==2.8.4
 typing_extensions==4.15.0
 urllib3==2.7.0
+google-auth-oauthlib

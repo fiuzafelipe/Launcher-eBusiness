@@ -109,14 +109,33 @@ class SecuritySetupDialog(QDialog):
         self.final_data = {"enabled": True, "name": name, "password_hash": hashed_pwd, "master_key_hash": master_key_hash, "hint": hint, "image": self.input_image.text().strip()}
         self.accept()
 
+class EditFolderDialog(QDialog):
+    def __init__(self, parent, folder_data):
+        super().__init__(parent)
+        self.folder_data = folder_data
+        layout = QFormLayout(self)
+        self.input_name = QLineEdit(folder_data["label"])
+        layout.addRow("Nome:", self.input_name)
+        btn = QPushButton("Salvar")
+        btn.clicked.connect(self.save)
+        layout.addWidget(btn)
+
+    def save(self):
+        self.folder_data["label"] = self.input_name.text()
+        self.accept()
 
 class SecurityModifyDialog(QDialog):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.hub = parent
+    def __init__(self, parent_hub, security_data):
+        super().__init__(parent_hub)
+        # Padronizado para self.hub para evitar o erro AttributeError
+        self.hub = parent_hub
+        self.security_data = security_data
+        
         self.setWindowTitle("Modificar Segurança")
         self.setFixedWidth(380)
         self.setWindowOpacity(0.95)
+        
+        # Agora o self.hub.accent_color funcionará perfeitamente
         accent = self.hub.accent_color
         
         self.setStyleSheet(f"""
@@ -126,23 +145,29 @@ class SecurityModifyDialog(QDialog):
             QPushButton#btn_danger {{ background-color: #ff5252; color: #fff; border: 1px solid #000000; }}
             QPushButton#btn_voltar {{ background-color: #161b24; color: #fff; border: 1px solid #232a38; }}
         """)
+        
         layout = QVBoxLayout(self)
         layout.setContentsMargins(25, 25, 25, 25)
         layout.setSpacing(15)
+        
         layout.addWidget(QLabel("Deseja alterar ou remover a senha?"))
+        
         btn_alterar = QPushButton("Alterar Senha")
         btn_remover = QPushButton("Remover Senha")
         btn_remover.setObjectName("btn_danger")
         btn_voltar = QPushButton("Voltar")
         btn_voltar.setObjectName("btn_voltar")
+        
         btn_alterar.clicked.connect(self.do_alterar)
         btn_remover.clicked.connect(self.do_remover)
         btn_voltar.clicked.connect(self.reject)
+        
         layout.addWidget(btn_alterar)
         layout.addWidget(btn_remover)
         layout.addWidget(btn_voltar)
 
     def do_remover(self):
+        # Remove a senha e limpa as configurações de segurança
         self.hub.security_settings = {}
         self.hub.save_settings(force=True)
         QMessageBox.information(self, "Sucesso", "A senha foi removida do sistema.")
@@ -150,6 +175,8 @@ class SecurityModifyDialog(QDialog):
 
     def do_alterar(self):
         self.accept()
+        # Importação local para evitar dependência circular
+        from ui.dialogs import SecurityChangePasswordDialog
         dialog = SecurityChangePasswordDialog(self.hub)
         dialog.exec()
 
