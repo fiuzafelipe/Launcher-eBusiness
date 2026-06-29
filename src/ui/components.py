@@ -281,73 +281,229 @@ class MediaViewerDialog(QDialog):
 
 
 class FolderCableFrame(QFrame):
+
     def __init__(self, parent_panel):
-        super().__init__(parent_panel)
+        super().__init__()
+
         self.panel = parent_panel
+
         self.dash_offset = 0
+
+        self.glow_phase = 0
+
         self.anim_timer = QTimer(self)
-        self.anim_timer.timeout.connect(self.update_animation)
+
+        self.anim_timer.timeout.connect(
+            self.update_animation
+        )
+
         self.anim_timer.start(40)
-        
+
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_OpaquePaintEvent,
+            False
+        )
+
         self.setStyleSheet(f"""
+
             FolderCableFrame {{
-                background-color: rgba(0, 0, 0, 0.4);
-                border: 2px solid {self.panel.hub.accent_color};
-                border-radius: 8px;
+
+                background-color:
+                rgba(0,0,0,0.25);
+
+                border:
+                1px solid {self.panel.hub.accent_color};
+
+                border-radius:
+                10px;
+
             }}
+
         """)
 
     def update_animation(self):
-        self.dash_offset = (self.dash_offset - 1) % 15
+
+        self.dash_offset -= 2
+
+        if self.dash_offset < -100:
+            self.dash_offset = 0
+
+        self.glow_phase += 5
+
+        if self.glow_phase > 360:
+            self.glow_phase = 0
+
         self.update()
 
     def paintEvent(self, event):
+
         super().paintEvent(event)
+
         layout = self.layout()
-        if not layout or layout.count() < 2: return
-        
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        accent_color = QColor(self.panel.hub.accent_color)
-        centers = []
-        for i in range(layout.count()):
-            item = layout.itemAt(i)
-            if item and item.widget() and item.widget().isVisible():
-                w = item.widget()
-                pos = w.mapTo(self, QPoint(w.width()//2, w.height()//2))
-                centers.append(pos)
-                
-        if len(centers) < 2:
-            painter.end()
+
+        if not layout:
             return
 
-        cable_color = QColor(10, 10, 15, 160)
-        base_pen = QPen(cable_color, 6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-        pulse_pen = QPen(accent_color, 2, Qt.PenStyle.CustomDashLine, Qt.PenCapStyle.RoundCap)
-        pulse_pen.setDashPattern([5, 10])
-        pulse_pen.setDashOffset(self.dash_offset)
-        
-        for i in range(len(centers)-1):
-            p1 = QPointF(centers[i])
-            p2 = QPointF(centers[i+1])
-            path = QPainterPath()
-            path.moveTo(p1)
-            
-            if abs(p1.y() - p2.y()) < 20: 
-                cp1 = QPointF(p1.x() + (p2.x() - p1.x()) / 3, p1.y() + 60)
-                cp2 = QPointF(p2.x() - (p2.x() - p1.x()) / 3, p2.y() + 60)
-            else:
-                cp1 = QPointF(p1.x() + 80, p1.y() + 60)
-                cp2 = QPointF(p2.x() - 80, p2.y() - 60)
-                
-            path.cubicTo(cp1, cp2, p2)
-            painter.setPen(base_pen)
-            painter.drawPath(path)
-            painter.setPen(pulse_pen)
-            painter.drawPath(path)
-        painter.end()
+        if layout.count() < 2:
+            return
 
+        painter = QPainter(self)
+
+        painter.setRenderHint(
+            QPainter.RenderHint.Antialiasing
+        )
+
+        accent_color = QColor(
+            self.panel.hub.accent_color
+        )
+
+        centers = []
+
+        for i in range(layout.count()):
+
+            item = layout.itemAt(i)
+
+            if item and item.widget():
+
+                widget = item.widget()
+
+                if widget.isVisible():
+
+                    pos = widget.mapTo(
+                        self,
+                        QPoint(
+                            widget.width()//2,
+                            widget.height()//2
+                        )
+                    )
+
+                    centers.append(pos)
+
+        if len(centers) < 2:
+
+            painter.end()
+
+            return
+
+        # Cabo escuro base
+
+        cable_color = QColor(
+            0,
+            0,
+            0,
+            210
+        )
+
+        base_pen = QPen(
+
+            cable_color,
+
+            7,
+
+            Qt.PenStyle.SolidLine,
+
+            Qt.PenCapStyle.RoundCap
+
+        )
+
+        # Luz passando no cabo
+
+        pulse_pen = QPen(
+
+            accent_color,
+
+            3,
+
+            Qt.PenStyle.CustomDashLine,
+
+            Qt.PenCapStyle.RoundCap
+
+        )
+
+        pulse_pen.setDashPattern(
+
+            [
+                8,
+                14
+            ]
+
+        )
+
+        pulse_pen.setDashOffset(
+
+            self.dash_offset
+
+        )
+
+        for i in range(len(centers)-1):
+
+            p1 = QPointF(
+                centers[i]
+            )
+
+            p2 = QPointF(
+                centers[i+1]
+            )
+
+            path = QPainterPath()
+
+            path.moveTo(
+                p1
+            )
+
+            # Curva estilo cabo USB
+
+            cp1 = QPointF(
+
+                p1.x()
+                +
+                (p2.x()-p1.x())/3,
+
+                p1.y()+60
+
+            )
+
+            cp2 = QPointF(
+
+                p2.x()
+                -
+                (p2.x()-p1.x())/3,
+
+                p2.y()+60
+
+            )
+
+            path.cubicTo(
+
+                cp1,
+
+                cp2,
+
+                p2
+
+            )
+
+            # cabo preto
+
+            painter.setPen(
+                base_pen
+            )
+
+            painter.drawPath(
+                path
+            )
+
+            # energia passando
+
+            painter.setPen(
+                pulse_pen
+            )
+
+            painter.drawPath(
+                path
+            )
+
+        painter.end()
 
 class FolderPanelWidget(QDialog):
     def __init__(self, parent_hub, folder_data):

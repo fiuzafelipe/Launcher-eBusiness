@@ -17,7 +17,7 @@ from ui.settings_dialogs import SettingsDialog
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QSizePolicy, QLineEdit, QLabel, QDialog,
                              QFileDialog, QMessageBox, QScrollArea, QMenu, QGraphicsBlurEffect,
-                             QStackedLayout, QApplication, QTabWidget)
+                             QStackedLayout, QApplication, QTabWidget, QGraphicsDropShadowEffect)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from PyQt6.QtWebEngineCore import (QWebEngineProfile, QWebEnginePage, QWebEngineSettings,
@@ -299,21 +299,45 @@ class StandaloneHub(QMainWindow):
         
         self.bottom_bar = QHBoxLayout(self.bottom_bar_widget)
         self.bottom_bar.setContentsMargins(15, 5, 15, 10)
-        
+
         self.lbl_status = QLabel("")
-        
+
         self.btn_save_session = QPushButton("Save")
         self.btn_save_session.setFixedSize(100, 30)
         self.btn_save_session.clicked.connect(self.trigger_save_tabs_button)
+
+        # LADO ESQUERDO
+        self.bottom_bar.addWidget(
+            self.lbl_status,
+            alignment=Qt.AlignmentFlag.AlignVCenter
+        )
+
+        # ESPAÇO CENTRAL RESERVADO
+        self.bottom_bar.addStretch()
+
+        # LADO DIREITO
+        self.bottom_bar.addWidget(
+            self.btn_save_session,
+            alignment=Qt.AlignmentFlag.AlignVCenter
+        )
+
+        # BOTÃO TEMA FICA INDEPENDENTE
+        self.theme_btn = ThemeSelectorButton(self)
+        self.theme_btn.setFixedSize(40,40)
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(25)
+        shadow.setOffset(0,0)
+        shadow.setColor(QColor(self.accent_color))
+
+        self.theme_btn.setGraphicsEffect(shadow)
         
-        self.bottom_bar.addWidget(self.lbl_status)
-        self.bottom_bar.addStretch() 
-        
-        self.theme_btn = ThemeSelectorButton(self) 
-        self.bottom_bar.addWidget(self.theme_btn) 
-        
-        self.bottom_bar.addStretch() 
-        self.bottom_bar.addWidget(self.btn_save_session)
+
+        self.theme_btn.setParent(self.bottom_bar_widget)
+        self.theme_btn.move(
+            (self.bottom_bar_widget.width() - 40) // 2,
+            2
+        )
+        self.theme_btn.raise_()
         
         self.main_layout.addWidget(self.bottom_bar_widget)
         
@@ -570,7 +594,16 @@ class StandaloneHub(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+
+        if hasattr(self, "theme_btn"):
+
+            self.theme_btn.move(
+                (self.bottom_bar_widget.width() - self.theme_btn.width()) // 2,
+                2
+            )
+
         if hasattr(self, 'lock_screen') and self.lock_screen.isVisible():
+
             self.lock_screen.setGeometry(self.rect())
 
     def toggle_fav_search(self):
@@ -790,6 +823,7 @@ class StandaloneHub(QMainWindow):
         self.grid_container_widget = FolderCableFrame(
             self.home_panel_adapter
         )
+        self.grid_container_widget.setMouseTracking(True)
         self.grid_container_widget.setStyleSheet(
             """
             QWidget {
@@ -824,6 +858,44 @@ class StandaloneHub(QMainWindow):
         btn_config_menu.setObjectName("btn_config_menu")
         btn_config_menu.setFixedSize(450, 42)
         btn_config_menu.clicked.connect(lambda: SettingsDialog(self).exec())
+        self.btn_ops_home = btn_ops
+        self.btn_config_home = btn_config_menu
+        
+        def add_button_effect(widget):
+
+            widget.setGraphicsEffect(None)
+
+            widget.setStyleSheet(f"""
+            QPushButton {{
+
+                background:
+                rgba(0,0,0,0.25);
+                border:
+                1px solid {self.accent_color};
+                border-radius:
+                8px;
+                color:white;
+                font-weight:bold;
+                letter-spacing:2px;
+            }}
+
+            QPushButton:hover {{
+
+                background:
+                rgba(
+                {QColor(self.accent_color).red()},
+                {QColor(self.accent_color).green()},
+                {QColor(self.accent_color).blue()},
+                0.65);
+                border:
+                2px solid {self.accent_color};
+                color:#07080a;
+            }}
+
+            """)
+
+        add_button_effect(btn_ops)
+        add_button_effect(btn_config_menu)
         
         self.search_bar = QLineEdit()
         self.theme_search_box = self.search_bar
@@ -840,7 +912,7 @@ class StandaloneHub(QMainWindow):
         content_layout.addLayout(control_panel_layout)
         content_layout.addSpacing(20)
 
-        self.grid_layout = QGridLayout()
+        self.grid_layout = QGridLayout(self.grid_container_widget)
         self.grid_layout.setSpacing(25)
         grid_container_hbox = QHBoxLayout()
         grid_container_hbox.addStretch()
@@ -852,7 +924,7 @@ class StandaloneHub(QMainWindow):
         self.nav_container.setFixedHeight(45)
         nav_layout = QHBoxLayout(self.nav_container)
         nav_layout.addStretch()
-        nav_style = f"QPushButton {{ background-color: {self.accent_color}; border: 1px solid #000000; color: #07080a; font-weight: bold; font-size: 15px; border-radius: 5px; }} QPushButton:hover {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40); color: {self.accent_color}; border-color: {self.accent_color}; }} QPushButton:disabled {{ border: 1px solid rgba(0,0,0,0.1); color: rgba(120, 120, 120, 0.5); background-color: rgba(0, 0, 0, 0.15); }}"
+        nav_style = f"QPushButton {{ background-color: {self.accent_color}; border: 1px solid rgba(0,0,0,0.25); color: #07080a; font-weight: bold; font-size: 15px; border-radius: 5px; }} QPushButton:hover {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40); color: {self.accent_color}; border-color: rgba(255,255,255,0.5); }} QPushButton:disabled {{ border: 1px solid rgba(0,0,0,0.1); color: rgba(120, 120, 120, 0.5); background-color: rgba(0, 0, 0, 0.15); }}"
         
         self.btn_prev_page = QPushButton("<")
         self.btn_prev_page.setFixedSize(60, 40)
@@ -898,6 +970,8 @@ class StandaloneHub(QMainWindow):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.grid_container_widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+
         scroll_area.setWidget(self.grid_container_widget)
         home_vertical_layout.addWidget(scroll_area)
 
@@ -922,7 +996,7 @@ class StandaloneHub(QMainWindow):
         text_search_fav = "#111111" if (has_wp and is_bg_light) else ("#000000" if is_light_theme else "#ffffff")
         self.fav_search_bar.setStyleSheet(f"QLineEdit {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.25); border: 1px solid {accent}; border-radius: 4px; color: {text_search_fav}; font-family: 'Segoe UI'; font-size: 12px; font-weight: bold; padding: 0 5px; }}")
         
-        strong_line, faint_line = f"2px solid {accent}", f"1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.50)"
+        strong_line, faint_line = f"3px solid {accent}", f"1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.50)"
 
         if has_wp:
 
@@ -956,7 +1030,17 @@ class StandaloneHub(QMainWindow):
             tab_inactive_bg_solid = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(40, c_theme.lightness() - 20)).name() if is_light_theme else QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(10, c_theme.lightness() + 6)).name()
             main_bg_style, tabbar_bg, tab_inactive_bg, tab_active_bg, pane_bg, btn_ops_bg, btn_ops_hover_bg, btn_ops_hover_text, text_color, font_weight, bottom_bar_bg = f"background-color: {top_bar_bg_solid};", top_bar_bg_solid, tab_inactive_bg_solid, main_bg, main_bg, f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.08)", accent, "#07080a", solid_text_color, "bold", "transparent"
 
-        self.lbl_status.setStyleSheet(f"color: {text_color}; font-family: 'Segoe UI'; font-weight: {font_weight}; font-size: 13px; background: transparent;")
+        self.lbl_status.setStyleSheet(
+            f"""
+            QLabel {{
+                color:{accent};
+                font-family:'Segoe UI';
+                font-weight:bold;
+                font-size:13px;
+                background:transparent;
+            }}
+            """
+        )
         self.setStyleSheet(get_main_stylesheet(accent, main_bg, strong_line, faint_line, tabbar_bg, tab_inactive_bg, tab_active_bg, pane_bg, btn_ops_bg, btn_ops_hover_bg, btn_ops_hover_text, text_color, font_weight, bottom_bar_bg, main_bg_style))
         self.update_save_tabs_button_visual()
         # atualiza caixa de pesquisa conforme tema
@@ -1001,10 +1085,11 @@ class StandaloneHub(QMainWindow):
             nav_style = f"""
             QPushButton {{
 
-                background-color: {accent};
+                background-color:
+                {accent};
 
                 border:
-                1px solid #000000;
+                1px solid rgba(0,0,0,0.25);
 
                 color:
                 #07080a;
@@ -1028,17 +1113,17 @@ class StandaloneHub(QMainWindow):
                 {c_accent.blue()},
                 0.40);
 
-                color:
-                {accent};
+                border:
+                1px solid {accent};
 
-                border-color:
-                {accent};
+                color:
+                #07080a;
             }}
 
             QPushButton:disabled {{
 
                 border:
-                1px solid rgba(0,0,0,0.1);
+                1px solid rgba(0,0,0,0.10);
 
                 color:
                 rgba(120,120,120,0.5);
@@ -1048,65 +1133,182 @@ class StandaloneHub(QMainWindow):
             }}
             """
 
-            self.btn_prev_page.setStyleSheet(
-                nav_style
-            )
+            self.btn_prev_page.setStyleSheet(nav_style)
+            self.btn_next_page.setStyleSheet(nav_style)
+        
+        if hasattr(self, "btn_ops_home"):
 
-            self.btn_next_page.setStyleSheet(
-                nav_style
-            )
+            for widget in [self.btn_ops_home, self.btn_config_home]:
+
+                widget.setStyleSheet(
+                    f"""
+                    QPushButton {{
+                        background-color:
+                        rgba(0,0,0,0.25);
+
+                        border:
+                        1px solid {accent};
+
+                        border-radius:
+                        8px;
+
+                        color:white;
+
+                        font-weight:bold;
+
+                        letter-spacing:2px;
+                    }}
+
+                    QPushButton:hover {{
+
+                        background-color:
+                        rgba(
+                        {c_accent.red()},
+                        {c_accent.green()},
+                        {c_accent.blue()},
+                        0.65);
+
+                        border:
+                        2px solid {accent};
+
+                        color:#07080a;
+                    }}
+                    """
+                )
 
         self.sync_all_whatsapp_themes()
 
     def update_save_tabs_button_visual(self):
 
-        accent = self.accent_color
+        accent = QColor(self.accent_color)
+
+        r = accent.red()
+        g = accent.green()
+        b = accent.blue()
+
+        bottom_bg = f"rgba({r},{g},{b},0.22)"
+        status_bg = f"rgba({r},{g},{b},0.45)"
 
         if hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path):
+            
+            bottom_bg = f"rgba({r},{g},{b},0.35)"
+            status_bg = f"rgba({r},{g},{b},0.60)"
 
-            bg = f"rgba({QColor(accent).red()}, {QColor(accent).green()}, {QColor(accent).blue()},0.55)"
+        # FUNDO GERAL DA BARRA INFERIOR
+        self.bottom_bar_widget.setStyleSheet(
+            f"""
+            QWidget#BottomBar {{
 
-        else:
+                background-color:
+                {bottom_bg};
 
-            bg = accent
+                border-top:
+                2px solid {self.accent_color};
 
+            }}
+
+            QWidget#BottomBar:hover {{
+
+                background-color:
+                rgba(
+                {r},
+                {g},
+                {b},
+                0.45
+                );
+
+                border-top:
+                2px solid {self.accent_color};
+
+            }}
+
+            """
+        )
+        
+        # EFEITO DE LUZ NO FUNDO DA BARRA
+        glow = QGraphicsDropShadowEffect()
+
+        glow.setBlurRadius(35)
+
+        glow.setOffset(0, -5)
+
+        glow.setColor(
+            QColor(
+                r,
+                g,
+                b,
+                180
+            )
+        )
+
+        self.bottom_bar_widget.setGraphicsEffect(glow)
+
+        # BOTAO SAVE FIXO
+        self.btn_save_session.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: rgba({r},{g},{b},0.85);
+                border: 1px solid {self.accent_color};
+                color:#07080a;
+                font-weight:bold;
+                border-radius:5px;
+                margin-top:8px;
+            }}
+
+            QPushButton:hover {{
+                background-color:{self.accent_color};
+                color:white;
+                border:1px solid white;
+            }}
+            """
+        )
+         
+        # STATUS SAVE ABAS         
         if self.save_tabs_enabled:
 
-            self.btn_save_session.setStyleSheet(
+            self.lbl_status.setStyleSheet(
                 f"""
-                QPushButton {{
-                    background-color: {accent};
-                    border: 1px solid #000000;
-                    color:#07080a;
+                QLabel {{
+                    background-color:{status_bg};
+                    border:1px solid {self.accent_color};
+                    color:white;
+                    font-family:'Segoe UI';
+                    font-size:13px;
                     font-weight:bold;
-                    border-radius:4px;
+                    border-radius:6px;
+                    padding-left:12px;
+                    padding-right:12px;
+                    padding-top:7px;
+                    padding-bottom:7px;
                 }}
                 """
             )
 
-            self.lbl_status.setText("Save abas ativado.")
 
+            self.lbl_status.setText("Save abas ativado.")
 
         else:
 
-            self.btn_save_session.setStyleSheet(
-                f"""
-                QPushButton {{
-                    background-color:{bg};
-                    border:1px solid {accent};
-                    color:#ffffff;
+            self.lbl_status.setStyleSheet(
+                """
+                QLabel {
+                    background:transparent;
+                    border:none;
+                    color:white;
+                    font-family:'Segoe UI';
+                    font-size:13px;
                     font-weight:bold;
-                    border-radius:4px;
-                }}
-
-                QPushButton:hover {{
-                    background-color:{accent};
-                    color:#07080a;
-                }}
+                }
                 """
             )
 
             self.lbl_status.setText("")
+
+        self.lbl_status.adjustSize()
+
+        self.lbl_status.setFixedHeight(32)
+
+        self.btn_save_session.setFixedHeight(30)
 
     def trigger_save_tabs_button(self):
         self.save_tabs_enabled = not self.save_tabs_enabled
