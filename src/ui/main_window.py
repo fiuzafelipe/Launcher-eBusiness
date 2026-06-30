@@ -227,13 +227,9 @@ class StandaloneHub(QMainWindow):
         self.current_page, self.items_per_page, self.is_restoring, self.search_filter, self.is_wp_light = 0, 8, False, "", False
         self.load_settings()
         
-        # aplica ícone salvo
+        # APLICA ICONE SALVO
         try:
-            icon_path = os.path.join(
-                current_dir,
-                "assets",
-                self.app_icon
-            )
+            icon_path = os.path.join(self.icons_dir, self.app_icon)
 
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
@@ -836,7 +832,7 @@ class StandaloneHub(QMainWindow):
         )
 
         content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(40, 15, 40, 25)
+        content_layout.setContentsMargins(40, 15, 40, 60)
 
         self.grid_container_widget.setLayout(content_layout)
         control_panel_layout = QVBoxLayout()
@@ -866,42 +862,6 @@ class StandaloneHub(QMainWindow):
         self.btn_ops_home = btn_ops
         self.btn_config_home = btn_config_menu
         
-        def add_button_effect(widget):
-
-            widget.setGraphicsEffect(None)
-
-            widget.setStyleSheet(f"""
-            QPushButton {{
-
-                background:
-                rgba(0,0,0,0.25);
-                border:
-                1px solid {self.accent_color};
-                border-radius:
-                8px;
-                color:white;
-                font-weight:bold;
-                letter-spacing:2px;
-            }}
-
-            QPushButton:hover {{
-
-                background:
-                rgba(
-                {QColor(self.accent_color).red()},
-                {QColor(self.accent_color).green()},
-                {QColor(self.accent_color).blue()},
-                0.65);
-                border:
-                2px solid {self.accent_color};
-                color:#07080a;
-            }}
-
-            """)
-
-        add_button_effect(btn_ops)
-        add_button_effect(btn_config_menu)
-        
         self.search_bar = QLineEdit()
         self.theme_search_box = self.search_bar
         self.search_bar.setFixedSize(450, 42)
@@ -915,13 +875,13 @@ class StandaloneHub(QMainWindow):
         control_panel_layout.addWidget(self.search_bar, alignment=Qt.AlignmentFlag.AlignCenter)
         
         content_layout.addLayout(control_panel_layout)
-        content_layout.addSpacing(20)
+        content_layout.addSpacing(5)
 
         self.grid_layout = QGridLayout()
 
         self.grid_layout.setSpacing(25)
 
-        self.grid_layout.setContentsMargins(20, 20, 20, 20)
+        self.grid_layout.setContentsMargins(20, 0, 20, 0)
         self.grid_layout.setSpacing(25)
         grid_container_hbox = QHBoxLayout()
         grid_container_hbox.addStretch()
@@ -930,8 +890,8 @@ class StandaloneHub(QMainWindow):
         content_layout.addLayout(grid_container_hbox)
 
         self.nav_container = QWidget()
-        self.nav_container.setFixedHeight(45)
         nav_layout = QHBoxLayout(self.nav_container)
+        nav_layout.setContentsMargins(0, 10, 0, 10)
         nav_layout.addStretch()
         nav_style = f"QPushButton {{ background-color: {self.accent_color}; border: 1px solid rgba(0,0,0,0.25); color: #07080a; font-weight: bold; font-size: 15px; border-radius: 5px; }} QPushButton:hover {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40); color: {self.accent_color}; border-color: rgba(255,255,255,0.5); }} QPushButton:disabled {{ border: 1px solid rgba(0,0,0,0.1); color: rgba(120, 120, 120, 0.5); background-color: rgba(0, 0, 0, 0.15); }}"
         
@@ -975,7 +935,7 @@ class StandaloneHub(QMainWindow):
         nav_layout.addStretch()
         
         content_layout.addStretch()
-        content_layout.addWidget(self.nav_container)
+        
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
@@ -983,6 +943,9 @@ class StandaloneHub(QMainWindow):
 
         scroll_area.setWidget(self.grid_container_widget)
         home_vertical_layout.addWidget(scroll_area)
+        
+        home_vertical_layout.addWidget(self.nav_container)
+        home_vertical_layout.addSpacing(10)
 
         self.tabs.insertTab(0, self.home_widget, "Home")
         self.update_favorites_panel()
@@ -1007,37 +970,32 @@ class StandaloneHub(QMainWindow):
         
         strong_line, faint_line = f"3px solid {accent}", f"1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.50)"
 
+        # CORREÇÃO GLOBAL: Definindo a cor sólida e hover transparente como base
+        btn_ops_bg = accent 
+        btn_ops_hover_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40)"
+        btn_ops_hover_text = "#ffffff"
+
         if has_wp:
-
             main_bg_style = f"border-image: url('{self.background_image_path.replace('\\', '/')}') 0 0 0 0 stretch stretch;"
-
-            tab_text_color = "#1a1a1a" if is_bg_light else "#e0e0e0"
-
             tabbar_bg = "rgba(255,255,255,0.35)" if is_bg_light else "rgba(0,0,0,0.35)"
-
             tab_inactive_bg = "rgba(255,255,255,0.15)" if is_bg_light else "rgba(0,0,0,0.15)"
-
             tab_active_bg = "rgba(255,255,255,0.85)" if is_bg_light else "rgba(20,20,20,0.85)"
-
             pane_bg = "transparent"
-
-            btn_ops_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()},0.65)"
-
-            btn_ops_hover_bg = accent
-
-            btn_ops_hover_text = "#07080a"
-
             text_color = "#111111" if is_bg_light else "#f5f5f5"
-
             font_weight = "600"
-
             bottom_bar_bg = "transparent"
-            
         else:
             solid_text_color = "#07080a" if is_light_theme else "#ffffff"
             top_bar_bg_solid = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(30, c_theme.lightness() - 12)).name() if is_light_theme else QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(5, c_theme.lightness() - 8)).name()
             tab_inactive_bg_solid = QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(40, c_theme.lightness() - 20)).name() if is_light_theme else QColor.fromHsl(c_theme.hue(), c_theme.saturation(), max(10, c_theme.lightness() + 6)).name()
-            main_bg_style, tabbar_bg, tab_inactive_bg, tab_active_bg, pane_bg, btn_ops_bg, btn_ops_hover_bg, btn_ops_hover_text, text_color, font_weight, bottom_bar_bg = f"background-color: {top_bar_bg_solid};", top_bar_bg_solid, tab_inactive_bg_solid, main_bg, main_bg, f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.08)", accent, "#07080a", solid_text_color, "bold", "transparent"
+            main_bg_style = f"background-color: {top_bar_bg_solid};"
+            tabbar_bg = top_bar_bg_solid
+            tab_inactive_bg = tab_inactive_bg_solid
+            tab_active_bg = main_bg
+            pane_bg = main_bg
+            text_color = solid_text_color
+            font_weight = "bold"
+            bottom_bar_bg = "transparent"
 
         self.lbl_status.setStyleSheet(
             f"""
@@ -1050,140 +1008,91 @@ class StandaloneHub(QMainWindow):
             }}
             """
         )
+        
+        # O stylesheet global agora recebe as cores sólidas corretamente
         self.setStyleSheet(get_main_stylesheet(accent, main_bg, strong_line, faint_line, tabbar_bg, tab_inactive_bg, tab_active_bg, pane_bg, btn_ops_bg, btn_ops_hover_bg, btn_ops_hover_text, text_color, font_weight, bottom_bar_bg, main_bg_style))
         self.update_save_tabs_button_visual()
+        
         # atualiza caixa de pesquisa conforme tema
         if hasattr(self, "theme_search_box"):
-
             self.theme_search_box.setStyleSheet(
                 f"""
                 QLineEdit {{
-                    background-color:
-                    rgba(
-                    {c_accent.red()},
-                    {c_accent.green()},
-                    {c_accent.blue()},
-                    0.35);
-
-                    border:
-                    1px solid {accent};
-
+                    background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.35);
+                    border: 1px solid {accent};
                     border-radius:6px;
-
                     color:{text_color};
-
                     font-family:'Segoe UI';
-
                     font-size:13px;
-
                     font-weight:bold;
-
                     padding-left:15px;
                 }}
-
                 QLineEdit:focus {{
-                    border:
-                    2px solid {accent};
+                    border: 2px solid {accent};
                 }}
                 """
             )
 
         # atualiza navegação < >
         if hasattr(self, "btn_prev_page"):
-
             nav_style = f"""
             QPushButton {{
-
-                background-color:
-                {accent};
-
-                border:
-                1px solid rgba(0,0,0,0.25);
-
-                color:
-                #07080a;
-
-                font-weight:
-                bold;
-
-                font-size:
-                15px;
-
-                border-radius:
-                5px;
+                background-color: {accent};
+                border: 1px solid rgba(0,0,0,0.25);
+                color: #07080a;
+                font-weight: bold;
+                font-size: 15px;
+                border-radius: 5px;
             }}
-
             QPushButton:hover {{
-
-                background-color:
-                rgba(
-                {c_accent.red()},
-                {c_accent.green()},
-                {c_accent.blue()},
-                0.40);
-
-                border:
-                1px solid {accent};
-
-                color:
-                #07080a;
+                background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40);
+                border: 1px solid {accent};
+                color: #07080a;
             }}
-
             QPushButton:disabled {{
-
-                border:
-                1px solid rgba(0,0,0,0.10);
-
-                color:
-                rgba(120,120,120,0.5);
-
-                background-color:
-                rgba(0,0,0,0.15);
+                border: 1px solid rgba(0,0,0,0.10);
+                color: rgba(120,120,120,0.5);
+                background-color: rgba(0,0,0,0.15);
             }}
             """
-
             self.btn_prev_page.setStyleSheet(nav_style)
             self.btn_next_page.setStyleSheet(nav_style)
         
+        # CORREÇÃO LOCAL: Usando ID Selectors (#btn_ops) para vencer a briga do CSS!
         if hasattr(self, "btn_ops_home"):
+            btn_text_color = "#07080a" if c_accent.lightness() > 140 else "#ffffff"
 
-            for widget in [self.btn_ops_home, self.btn_config_home]:
-
-                widget.setStyleSheet(
-                    f"""
-                    QPushButton {{
-                        background-color:
-                        rgba(0,0,0,0.25);
-
-                        border:
-                        1px solid {accent};
-
-                        border-radius:
-                        8px;
-
-                        color:white;
-
-                        font-weight:bold;
-
-                        letter-spacing:2px;
-                    }}
-
-                    QPushButton:hover {{
-
-                        background-color:
-                        rgba(
-                        {c_accent.red()},
-                        {c_accent.green()},
-                        {c_accent.blue()},
-                        0.65);
-
-                        border:
-                        2px solid {accent};
-
-                        color:#07080a;
-                    }}
-                    """
-                )
+            self.btn_ops_home.setStyleSheet(f"""
+                QPushButton#btn_ops {{
+                    background-color: {accent};
+                    border: 1px solid rgba(0,0,0,0.3);
+                    border-radius: 8px;
+                    color: {btn_text_color};
+                    font-weight: bold;
+                    letter-spacing: 2px;
+                }}
+                QPushButton#btn_ops:hover {{
+                    background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40);
+                    border: 1px solid {accent};
+                    color: #ffffff;
+                }}
+            """)
+            
+            self.btn_config_home.setStyleSheet(f"""
+                QPushButton#btn_config_menu {{
+                    background-color: {accent};
+                    border: 1px solid rgba(0,0,0,0.3);
+                    border-radius: 8px;
+                    color: {btn_text_color};
+                    font-weight: bold;
+                    letter-spacing: 2px;
+                }}
+                QPushButton#btn_config_menu:hover {{
+                    background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40);
+                    border: 1px solid {accent};
+                    color: #ffffff;
+                }}
+            """)
 
         self.sync_all_whatsapp_themes()
 
@@ -1375,7 +1284,7 @@ class StandaloneHub(QMainWindow):
         self.buttons_list = data.get("buttons", [])
         self.folders_list = data.get("folders", [])
         self.auto_save, self.save_tabs_enabled = data.get("auto_save", False), data.get("save_tabs_enabled", False)
-        self.theme_mode, self.accent_color, self.theme_base_color = data.get("theme_mode", "Escuro"), data.get("accent_color", "#d9d9d9"), data.get("theme_base_color", "#242120")
+        self.theme_mode, self.accent_color, self.theme_base_color = data.get("theme_mode", "Escuro"), data.get("accent_color", "#10b981"), data.get("theme_base_color", "#242120")
         
         self.app_icon = data.get("app_icon", "Custom Transparent.ico")
         
@@ -1408,7 +1317,7 @@ class StandaloneHub(QMainWindow):
             "auto_save": getattr(self, 'auto_save', False),
             "save_tabs_enabled": getattr(self, 'save_tabs_enabled', False),
             "theme_mode": getattr(self, 'theme_mode', 'Escuro'),
-            "accent_color": getattr(self, 'accent_color', '#d9d9d9'),
+            "accent_color": getattr(self, 'accent_color', '#10b981'),
             "theme_base_color": getattr(self, 'theme_base_color', '#242120'),
             
             "app_icon": getattr(self, 'app_icon', 'Custom Transparent.ico'),

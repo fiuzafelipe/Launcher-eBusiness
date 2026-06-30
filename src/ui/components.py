@@ -476,7 +476,7 @@ class FolderPanelWidget(QDialog):
         """)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 10, 20, 10)
+        layout.setContentsMargins(20, 10, 20, 25)
         layout.setSpacing(3)
         
         self.header_frame = QFrame()
@@ -844,15 +844,19 @@ class ThemeSelectorButton(QPushButton):
         self.update_visual()
 
     def update_visual(self):
+        from PyQt6.QtCore import QSize
+        from PyQt6.QtGui import QIcon
+
         current_icon = getattr(self.hub, 'app_icon', "Custom Transparent.ico")
         icon_path = os.path.join(self.hub.icons_dir, current_icon)
         
         if os.path.exists(icon_path):
+            # Define o ícone nativamente em vez de usar background-image
+            self.setIcon(QIcon(icon_path))
+            self.setIconSize(QSize(22, 22)) # Tamanho ideal para um botão de 40x40
+            
             self.setStyleSheet(f"""
                 QPushButton {{
-                    background-image: url('{icon_path.replace(chr(92), '/')}');
-                    background-position: center;
-                    background-repeat: no-repeat;
                     background-color: #161b24;
                     border: 2px solid {self.hub.accent_color};
                     border-radius: 20px; 
@@ -864,6 +868,7 @@ class ThemeSelectorButton(QPushButton):
             """)
         else:
             # Fallback seguro
+            self.setIcon(QIcon())
             self.setStyleSheet(f"QPushButton {{ background-color: {self.hub.accent_color}; border: 2px solid #fff; border-radius: 20px; }}")
 
     def show_theme_menu(self):
@@ -904,10 +909,6 @@ class ThemeSelectorButton(QPushButton):
     def apply_theme_instantly(self, filename, new_color):
         self.hub.accent_color = new_color
         self.hub.app_icon = filename
-        
-        if hasattr(self.hub, 'settings'):
-            self.hub.settings['accent_color'] = new_color
-            self.hub.settings['app_icon'] = filename
         self.hub.save_settings(force=True)
         
         icon_path = os.path.join(self.hub.icons_dir, filename)
@@ -915,8 +916,22 @@ class ThemeSelectorButton(QPushButton):
             self.window().setWindowIcon(QIcon(icon_path))
         
         self.update_visual()
+        
+        # Chama a função de estilo para aplicar tudo
         if hasattr(self.hub, 'apply_styles'):
             self.hub.apply_styles()
+            
+        # Força atualização visual dos botões principais manualmente aqui também
+        # para garantir que o CSS "vença" qualquer sobreposição
+        if hasattr(self.hub, 'btn_ops_home'):
+            c_accent = QColor(new_color)
+            btn_text_color = "#07080a" if c_accent.lightness() > 140 else "#ffffff"
+            style = f"""
+                QPushButton {{ background-color: {new_color}; border: 1px solid rgba(0,0,0,0.3); border-radius: 8px; color: {btn_text_color}; font-weight: bold; letter-spacing: 2px; }}
+                QPushButton:hover {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40); border: 1px solid {new_color}; color: #ffffff; }}
+            """
+            self.hub.btn_ops_home.setStyleSheet(style)
+            self.hub.btn_config_home.setStyleSheet(style)
             
         if hasattr(self.hub, 'filter_buttons_by_search'):
             self.hub.filter_buttons_by_search(self.hub.search_filter)
