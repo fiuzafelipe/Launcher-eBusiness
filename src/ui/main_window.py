@@ -823,7 +823,9 @@ class StandaloneHub(QMainWindow):
         self.grid_container_widget = FolderCableFrame(
             self.home_panel_adapter
         )
+
         self.grid_container_widget.setMouseTracking(True)
+
         self.grid_container_widget.setStyleSheet(
             """
             QWidget {
@@ -832,8 +834,11 @@ class StandaloneHub(QMainWindow):
             }
             """
         )
-        content_layout = QVBoxLayout(self.grid_container_widget)
+
+        content_layout = QVBoxLayout()
         content_layout.setContentsMargins(40, 15, 40, 25)
+
+        self.grid_container_widget.setLayout(content_layout)
         control_panel_layout = QVBoxLayout()
         control_panel_layout.setSpacing(10)
         
@@ -912,7 +917,11 @@ class StandaloneHub(QMainWindow):
         content_layout.addLayout(control_panel_layout)
         content_layout.addSpacing(20)
 
-        self.grid_layout = QGridLayout(self.grid_container_widget)
+        self.grid_layout = QGridLayout()
+
+        self.grid_layout.setSpacing(25)
+
+        self.grid_layout.setContentsMargins(20, 20, 20, 20)
         self.grid_layout.setSpacing(25)
         grid_container_hbox = QHBoxLayout()
         grid_container_hbox.addStretch()

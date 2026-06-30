@@ -289,37 +289,28 @@ class FolderCableFrame(QFrame):
 
         self.dash_offset = 0
 
-        self.glow_phase = 0
-
         self.anim_timer = QTimer(self)
-
         self.anim_timer.timeout.connect(
             self.update_animation
         )
 
         self.anim_timer.start(40)
 
+
         self.setAttribute(
-            Qt.WidgetAttribute.WA_OpaquePaintEvent,
-            False
+            Qt.WidgetAttribute.WA_TranslucentBackground,
+            True
         )
 
-        self.setStyleSheet(f"""
-
+        self.setStyleSheet(
+            f"""
             FolderCableFrame {{
-
-                background-color:
-                rgba(0,0,0,0.25);
-
-                border:
-                1px solid {self.panel.hub.accent_color};
-
-                border-radius:
-                10px;
-
+                background-color: rgba(0,0,0,0.25);
+                border: 1px solid {self.panel.hub.accent_color};
+                border-radius: 10px;
             }}
-
-        """)
+            """
+        )
 
     def update_animation(self):
 
@@ -328,24 +319,12 @@ class FolderCableFrame(QFrame):
         if self.dash_offset < -100:
             self.dash_offset = 0
 
-        self.glow_phase += 5
-
-        if self.glow_phase > 360:
-            self.glow_phase = 0
-
         self.update()
 
-    def paintEvent(self, event):
+    def paintEvent(self,event):
 
         super().paintEvent(event)
 
-        layout = self.layout()
-
-        if not layout:
-            return
-
-        if layout.count() < 2:
-            return
 
         painter = QPainter(self)
 
@@ -353,96 +332,77 @@ class FolderCableFrame(QFrame):
             QPainter.RenderHint.Antialiasing
         )
 
-        accent_color = QColor(
+        cards = []
+
+        # PEGA TODOS OS BOTÕES/PÁSTAS CRIADOS
+        widgets = self.findChildren(
+            DraggableToolButton
+        )
+
+        for widget in widgets:
+
+            if widget.isVisible():
+
+                pos = widget.mapTo(
+                    self,
+                    QPoint(
+                        widget.width()//2,
+                        widget.height()//2
+                    )
+                )
+
+                cards.append(pos)
+
+        if len(cards) < 2:
+
+            painter.end()
+            return
+
+        accent = QColor(
             self.panel.hub.accent_color
         )
 
-        centers = []
-
-        for i in range(layout.count()):
-
-            item = layout.itemAt(i)
-
-            if item and item.widget():
-
-                widget = item.widget()
-
-                if widget.isVisible():
-
-                    pos = widget.mapTo(
-                        self,
-                        QPoint(
-                            widget.width()//2,
-                            widget.height()//2
-                        )
-                    )
-
-                    centers.append(pos)
-
-        if len(centers) < 2:
-
-            painter.end()
-
-            return
-
-        # Cabo escuro base
-
-        cable_color = QColor(
-            0,
-            0,
-            0,
-            210
-        )
-
-        base_pen = QPen(
-
-            cable_color,
-
-            7,
-
+        shadow_pen = QPen(
+            QColor(0,0,0,120),
+            14,
             Qt.PenStyle.SolidLine,
-
             Qt.PenCapStyle.RoundCap
-
         )
 
-        # Luz passando no cabo
+        cable_pen = QPen(
+            QColor(5,5,5,230),
+            7,
+            Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap
+        )
 
-        pulse_pen = QPen(
-
-            accent_color,
-
+        glow_pen = QPen(
+            accent,
             3,
-
             Qt.PenStyle.CustomDashLine,
-
             Qt.PenCapStyle.RoundCap
-
         )
 
-        pulse_pen.setDashPattern(
-
+        glow_pen.setDashPattern(
             [
                 8,
-                14
+                16
             ]
-
         )
 
-        pulse_pen.setDashOffset(
-
+        glow_pen.setDashOffset(
             self.dash_offset
-
         )
 
-        for i in range(len(centers)-1):
+        # LIGA PRIMEIRO AO ÚLTIMO NA ORDEM
+        for i in range(len(cards)-1):
 
             p1 = QPointF(
-                centers[i]
+                cards[i]
             )
 
             p2 = QPointF(
-                centers[i+1]
+                cards[i+1]
             )
 
             path = QPainterPath()
@@ -451,52 +411,42 @@ class FolderCableFrame(QFrame):
                 p1
             )
 
-            # Curva estilo cabo USB
-
-            cp1 = QPointF(
-
-                p1.x()
-                +
-                (p2.x()-p1.x())/3,
-
-                p1.y()+60
-
-            )
-
-            cp2 = QPointF(
-
-                p2.x()
-                -
-                (p2.x()-p1.x())/3,
-
-                p2.y()+60
-
-            )
+            curva = 60
 
             path.cubicTo(
 
-                cp1,
+                QPointF(
+                    p1.x(),
+                    p1.y()+curva
+                ),
 
-                cp2,
+                QPointF(
+                    p2.x(),
+                    p2.y()+curva
+                ),
 
                 p2
 
             )
 
-            # cabo preto
-
             painter.setPen(
-                base_pen
+                shadow_pen
             )
 
             painter.drawPath(
                 path
             )
 
-            # energia passando
+            painter.setPen(
+                cable_pen
+            )
+
+            painter.drawPath(
+                path
+            )
 
             painter.setPen(
-                pulse_pen
+                glow_pen
             )
 
             painter.drawPath(
@@ -514,7 +464,7 @@ class FolderPanelWidget(QDialog):
         self.items_per_page = 8
         self.search_filter = "" 
         
-        self.setFixedSize(944, 630) 
+        self.setFixedSize(944,760)
         
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -526,8 +476,8 @@ class FolderPanelWidget(QDialog):
         """)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(8) 
+        layout.setContentsMargins(20, 10, 20, 10)
+        layout.setSpacing(3)
         
         self.header_frame = QFrame()
         self.header_frame.setObjectName("HeaderFrame")
@@ -552,13 +502,18 @@ class FolderPanelWidget(QDialog):
         layout.addWidget(self.header_frame)
         
         self.grid_frame = FolderCableFrame(self)
+
+        # espaço suficiente para os cards + cabo sem esmagar a navegação
+        self.grid_frame.setFixedHeight(330)
         self.grid_layout = QGridLayout(self.grid_frame)
         self.grid_layout.setSpacing(8)
-        self.grid_layout.setContentsMargins(10, 10, 10, 10)
+        self.grid_layout.setContentsMargins(10, 5, 10, 5)
         layout.addWidget(self.grid_frame)
+        layout.setStretchFactor(self.grid_frame, 1)
         
         self.nav_frame = QFrame()
         self.nav_frame.setObjectName("NavFrame")
+        self.nav_frame.setFixedHeight(50)
         self.nav_frame.setStyleSheet(f"#NavFrame {{ border: 2px solid {self.hub.accent_color}; border-radius: 8px; background-color: rgba(0, 0, 0, 0.4); }}")
         
         nav_layout = QHBoxLayout(self.nav_frame)
@@ -583,6 +538,12 @@ class FolderPanelWidget(QDialog):
         nav_layout.addWidget(self.btn_next)
         layout.addWidget(self.nav_frame)
         
+        layout.setStretch(0, 0)
+        layout.setStretch(1, 1)
+        layout.setStretch(2, 0)
+        layout.setStretch(3, 0)
+        layout.setStretch(4, 0)
+        
         self.shortcut_left = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
         self.shortcut_left.activated.connect(lambda: self.change_page(-1))
         self.shortcut_right = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
@@ -595,13 +556,13 @@ class FolderPanelWidget(QDialog):
             QPushButton:hover {{ background-color: #ffffff; }}
         """)
         btn_add.clicked.connect(self.add_button_to_folder)
-        layout.addWidget(btn_add)
+        layout.addWidget(btn_add, 0)
         
         btn_back = QPushButton("Voltar / Fechar")
         btn_back.setMinimumHeight(45)
         btn_back.setStyleSheet(f"QPushButton {{ background-color: #161b24; color: #fff; font-weight: bold; border-radius: 6px; border: 1px solid {self.hub.accent_color}; }} QPushButton:hover {{ background-color: {self.hub.accent_color}; color: #000; }}")
         btn_back.clicked.connect(self.accept)
-        layout.addWidget(btn_back)
+        layout.addWidget(btn_back, 0)
         
         self.refresh_grid()
         
@@ -643,11 +604,15 @@ class FolderPanelWidget(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if self.parent():
-            parent_geom = self.parent().geometry()
-            x = parent_geom.x() + (parent_geom.width() - self.width()) // 2
-            y = parent_geom.y() + (parent_geom.height() - self.height()) // 2 - 10
-            self.move(x, y)
+        
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = screen.x() + (screen.width() - self.width()) // 2
+        y = screen.y() + (screen.height() - self.height()) // 2
+        
+        # SOBE UM POUCO PARA NÃO CORTAR EMBAIXO
+        y -= 50
+        
+        self.move(x, y)
 
     def update_header_visuals(self):
         bg_img = self.folder_data.get("header_bg", "")
