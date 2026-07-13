@@ -6,9 +6,10 @@ import datetime
 import calendar
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, 
                              QPushButton, QLineEdit, QLabel, QFileDialog,
-                             QMessageBox, QGridLayout, QComboBox, QScrollArea, QWidget, QApplication)
+                             QMessageBox, QGridLayout, QComboBox, QScrollArea, QWidget, QApplication,
+                             QListWidget, QListWidgetItem, QGraphicsDropShadowEffect)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor # <- Correção do erro aqui!
+from PyQt6.QtGui import QColor, QIcon
 
 # Importações do Core
 from core.image_utils import process_and_save_icon
@@ -727,3 +728,332 @@ class DeleteToolboxDialog(QDialog):
         self.parent_hub.filter_buttons_by_search(self.parent_hub.search_filter)
         self.parent_hub.update_favorites_panel()
         self.accept()
+        
+# =========================================================================================
+# COMANDO RÁPIDO (COMMAND PALETTE)
+# =========================================================================================
+from PyQt6.QtWidgets import QFrame # Caso ainda não esteja no topo
+
+class CommandPaletteDialog(QDialog):
+    def __init__(self, parent_hub):
+        super().__init__(parent_hub)
+        self.hub = parent_hub
+        
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Popup)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(700, 520)
+        
+        self.setup_ui()
+        self.populate_list()
+        
+    def setup_ui(self):
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+        
+        self.bg_widget = QWidget()
+        self.bg_widget.setObjectName("CmdBg")
+        accent = self.hub.accent_color
+        
+        self.bg_widget.setStyleSheet(f"""
+            QWidget#CmdBg {{
+                background-color: rgba(17, 20, 26, 0.98);
+                border: 2px solid {accent};
+                border-radius: 12px;
+            }}
+        """)
+        
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(35)
+        shadow.setColor(QColor(0, 0, 0, 200))
+        shadow.setOffset(0, 12)
+        self.bg_widget.setGraphicsEffect(shadow)
+        
+        bg_layout = QVBoxLayout(self.bg_widget)
+        bg_layout.setContentsMargins(20, 15, 20, 20)
+        bg_layout.setSpacing(12)
+        
+        # =================================================================
+        # 1. CABEÇALHO (Título + Chrome Top-Right)
+        # =================================================================
+        header_layout = QHBoxLayout()
+        
+        # --- NOVO: Título Dinâmico Estilizado ---
+        lbl_title = QLabel("✨ Painel Inteligente")
+        lbl_title.setStyleSheet(f"""
+            color: {accent};
+            font-family: 'Segoe UI';
+            font-size: 17px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            background: transparent;
+        """)
+        header_layout.addWidget(lbl_title)
+        
+        header_layout.addStretch() # Empurra a barra de ferramentas para a direita
+        
+        self.chrome_toolbar = QFrame()
+        self.chrome_toolbar.setStyleSheet("""
+            QFrame { background: transparent; }
+            QPushButton { 
+                background: transparent; 
+                border: none; 
+                font-size: 16px; 
+                color: #b0b3b8; 
+                border-radius: 14px; 
+            }
+            QPushButton:hover { background-color: rgba(255, 255, 255, 0.1); color: #fff; }
+            QFrame#separator { background-color: rgba(255, 255, 255, 0.15); max-width: 1px; margin: 6px 4px; }
+        """)
+        ct_layout = QHBoxLayout(self.chrome_toolbar)
+        ct_layout.setContentsMargins(0, 0, 0, 0)
+        ct_layout.setSpacing(2)
+        
+        # --- NOVO: Botões com Funcionalidade Conectada ---
+        btn_ext = QPushButton("🧩")
+        btn_ext.setFixedSize(28, 28)
+        btn_ext.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_ext.clicked.connect(self.action_extensions)
+        
+        sep1 = QFrame()
+        sep1.setObjectName("separator")
+        
+        btn_music = QPushButton("🎵")
+        btn_music.setFixedSize(28, 28)
+        btn_music.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_music.clicked.connect(self.action_music)
+        
+        btn_sync = QPushButton("👤")
+        btn_sync.setFixedSize(28, 28)
+        btn_sync.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_sync.clicked.connect(self.action_sync)
+        
+        btn_menu = QPushButton("⋮")
+        btn_menu.setFixedSize(28, 28)
+        btn_menu.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_menu.clicked.connect(self.action_menu)
+        
+        sep2 = QFrame()
+        sep2.setObjectName("separator")
+        
+        btn_close = QPushButton("✕")
+        btn_close.setFixedSize(28, 28)
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_close.setStyleSheet("QPushButton:hover { background-color: #ff5252; color: #fff; }")
+        btn_close.clicked.connect(self.reject)
+        
+        ct_layout.addWidget(btn_ext)
+        ct_layout.addWidget(sep1)
+        ct_layout.addWidget(btn_music)
+        ct_layout.addWidget(btn_sync)
+        ct_layout.addWidget(btn_menu)
+        ct_layout.addWidget(sep2)
+        ct_layout.addWidget(btn_close)
+        
+        header_layout.addWidget(self.chrome_toolbar)
+        bg_layout.addLayout(header_layout)
+
+        # =================================================================
+        # 2. BARRA DE PESQUISA INTERNA
+        # =================================================================
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("O que você deseja acessar? (Busque ferramentas ou pastas...)")
+        self.search_bar.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: rgba(0, 0, 0, 0.4);
+                border: 2px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                color: white;
+                padding: 14px 18px;
+                font-family: 'Segoe UI';
+                font-size: 16px;
+                font-weight: bold;
+            }}
+            QLineEdit:focus {{
+                border: 2px solid {accent};
+                background-color: rgba(0, 0, 0, 0.6);
+            }}
+        """)
+        self.search_bar.textChanged.connect(self.filter_items)
+        bg_layout.addWidget(self.search_bar)
+        
+        self.result_list = QListWidget()
+        self.result_list.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.result_list.setStyleSheet(f"""
+            QListWidget {{ background: transparent; border: none; outline: none; }}
+            QListWidget::item {{ color: white; padding: 12px 15px; border-radius: 8px; font-family: 'Segoe UI'; font-size: 15px; font-weight: 600; margin-bottom: 4px; }}
+            QListWidget::item:selected {{ background-color: {accent}; color: #000000; }}
+            QListWidget::item:hover {{ background-color: rgba(255, 255, 255, 0.1); }}
+        """)
+        self.result_list.itemActivated.connect(self.open_selected_item)
+        self.result_list.itemClicked.connect(self.open_selected_item)
+        bg_layout.addWidget(self.result_list)
+
+        # =================================================================
+        # 3. BARRA DE PESQUISA GOOGLE
+        # =================================================================
+        self.google_frame = QFrame()
+        self.google_frame.setFixedHeight(50)
+        self.google_frame.setStyleSheet("""
+            QFrame { background-color: #ffffff; border-radius: 25px; }
+            QLabel, QPushButton { background: transparent; border: none; }
+            QLineEdit { background: transparent; border: none; color: #202124; font-size: 15px; font-family: 'Segoe UI'; }
+        """)
+        
+        g_layout = QHBoxLayout(self.google_frame)
+        g_layout.setContentsMargins(15, 0, 10, 0)
+        g_layout.setSpacing(12)
+        
+        icon_plus = QLabel("➕")
+        icon_plus.setStyleSheet("color: #5f6368; font-size: 15px;")
+        
+        self.google_input = QLineEdit()
+        self.google_input.setPlaceholderText("Pergunte ao Google ou digite um URL...")
+        self.google_input.returnPressed.connect(self.do_google_search)
+        
+        icon_mic = QPushButton("🎤")
+        icon_mic.setFixedSize(28, 28)
+        icon_mic.setCursor(Qt.CursorShape.PointingHandCursor)
+        icon_mic.setStyleSheet("color: #5f6368; font-size: 16px;")
+        
+        icon_lens = QPushButton("📷")
+        icon_lens.setFixedSize(28, 28)
+        icon_lens.setCursor(Qt.CursorShape.PointingHandCursor)
+        icon_lens.setStyleSheet("color: #5f6368; font-size: 16px;")
+        
+        btn_ia = QPushButton("✨ Modo IA")
+        btn_ia.setFixedHeight(34)
+        btn_ia.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_ia.setStyleSheet("""
+            QPushButton { background-color: #f1f3f4; color: #202124; border-radius: 17px; padding: 0 15px; font-size: 13px; font-weight: 600; font-family: 'Segoe UI'; }
+            QPushButton:hover { background-color: #e8eaed; }
+        """)
+        
+        g_layout.addWidget(icon_plus)
+        g_layout.addWidget(self.google_input)
+        g_layout.addWidget(icon_mic)
+        g_layout.addWidget(icon_lens)
+        g_layout.addWidget(btn_ia)
+        
+        bg_layout.addWidget(self.google_frame)
+
+        self.search_bar.installEventFilter(self)
+        self.layout.addWidget(self.bg_widget)
+        
+    # =================================================================
+    # AÇÕES DOS BOTÕES (Cabeçalho)
+    # =================================================================
+    def action_extensions(self):
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Extensões", "Central de Extensões em desenvolvimento.\nAqui você gerenciará plugins e add-ons.")
+
+    def action_music(self):
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Controle de Mídia", "Módulo de música e controle de reprodução web em breve.")
+
+    def action_sync(self):
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Sincronização", "O sistema de Sincronização em Nuvem de usuários será implementado aqui.")
+
+    def action_menu(self):
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Opções", "Mais configurações da Command Palette serão disponibilizadas aqui.")
+        
+    # =================================================================
+    # ARRASTAR A JANELA (Drag & Drop)
+    # =================================================================
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.MouseButton.LeftButton and hasattr(self, 'drag_pos'):
+            self.move(event.globalPosition().toPoint() - self.drag_pos)
+            event.accept()
+        
+    # =================================================================
+    # LÓGICA DE BUSCA E NAVEGAÇÃO
+    # =================================================================
+    def populate_list(self):
+        self.all_items = []
+        if hasattr(self.hub, 'buttons_list'):
+            self.all_items.extend(self.hub.buttons_list)
+        if hasattr(self.hub, 'folders_list'):
+            for folder in self.hub.folders_list:
+                self.all_items.extend(folder.get("buttons", []))
+        self.filter_items("")
+        
+    def filter_items(self, text):
+        self.result_list.clear()
+        search_term = text.lower().strip()
+        for item in self.all_items:
+            label = item.get("label", "")
+            if search_term in label.lower():
+                from PyQt6.QtWidgets import QListWidgetItem # Para garantir que está carregado
+                from PyQt6.QtGui import QIcon
+                
+                list_item = QListWidgetItem(f"🚀  {label}")
+                icon_name = f"{label.lower()}.png"
+                icon_path = os.path.join(self.hub.icons_dir, icon_name)
+                if os.path.exists(icon_path):
+                    list_item.setIcon(QIcon(icon_path))
+                list_item.setData(Qt.ItemDataRole.UserRole, item)
+                self.result_list.addItem(list_item)
+                
+        if self.result_list.count() > 0:
+            self.result_list.setCurrentRow(0)
+            
+    def open_selected_item(self, item=None):
+        if not item:
+            item = self.result_list.currentItem()
+        if not item: return
+            
+        item_data = item.data(Qt.ItemDataRole.UserRole)
+        url = item_data.get("url", "")
+        label = item_data.get("label", "")
+        
+        if url:
+            self.hub.open_web_tab(url, label)
+        self.accept()
+
+    def do_google_search(self):
+        query = self.google_input.text().strip()
+        if not query: return
+        
+        if query.startswith("http://") or query.startswith("https://") or ("." in query and " " not in query):
+            url = query if query.startswith("http") else f"https://{query}"
+            label = query
+        else:
+            url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
+            label = f"Busca: {query[:10]}..."
+            
+        self.hub.open_web_tab(url, label)
+        self.accept()
+        
+    def eventFilter(self, obj, event):
+        if obj == self.search_bar and event.type() == event.Type.KeyPress:
+            key = event.key()
+            if key == Qt.Key.Key_Down:
+                current = self.result_list.currentRow()
+                if current < self.result_list.count() - 1:
+                    self.result_list.setCurrentRow(current + 1)
+                return True
+            elif key == Qt.Key.Key_Up:
+                current = self.result_list.currentRow()
+                if current > 0:
+                    self.result_list.setCurrentRow(current - 1)
+                return True
+            elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
+                self.open_selected_item()
+                return True
+        return super().eventFilter(obj, event)
+
+    def showEvent(self, event):
+        """Centralização Perfeita (Removido o -60 offset)"""
+        if self.hub:
+            hub_rect = self.hub.geometry()
+            x = hub_rect.x() + (hub_rect.width() - self.width()) // 2
+            y = hub_rect.y() + (hub_rect.height() - self.height()) // 2
+            self.move(x, y) 
+        super().showEvent(event)

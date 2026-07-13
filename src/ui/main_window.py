@@ -4,14 +4,16 @@ import shutil
 import gc
 import datetime
 import logging
+
+from core.browser_engine import BrowserEngine
 from core.config_manager import ConfigManager
+from ui.browser_tab import BrowserTab
 from ui.styles import get_main_stylesheet
 
 from ui.components import (CustomTabWidget, ThemeSelectorButton, FolderCableFrame,
                            DraggableToolButton, LockScreenWidget)
 
-from ui.dialogs import (HistoryDialog, AboutDialog, DirectNavDialog)
-
+from ui.dialogs import (HistoryDialog, AboutDialog, DirectNavDialog, CommandPaletteDialog)
 from ui.settings_dialogs import SettingsDialog
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout, 
@@ -29,200 +31,34 @@ from PyQt6.QtGui import QColor, QImage, QShortcut, QKeySequence, QCursor, QPaint
 current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class HomePanelAdapter(QWidget):
-
     def __init__(self, hub):
         super().__init__()
         self.hub = hub
 
-class HeaderInterceptor(QWebEngineUrlRequestInterceptor):
-    def interceptRequest(self, info):
-
-        info.setHttpHeader(
-            b"Accept-Language",
-            b"pt-BR,pt;q=0.9,en-US;q=0.8"
-        )
-
-        info.setHttpHeader(
-            b"sec-ch-ua-platform",
-            b'"Windows"'
-        )
 
 class StandaloneHub(QMainWindow):
     def __init__(self):
         super().__init__()
-        # Agora o StandaloneHub conseguirá enxergar 'current_dir'
         self.config_file = os.path.join(current_dir, "core", "config.json")
         self.setWindowTitle("Custom Explorer")
         self.resize(1280, 720)
         
-        # Inicialização de caminhos e configs (ORDEM CORRETA)
-        self.config_file = os.path.join(current_dir, "core", "config.json")
+        # Inicialização de caminhos e configs
         self.config_manager = ConfigManager(self.config_file)
         self.icons_dir = os.path.join(os.path.dirname(current_dir), "assets", "icons")
         os.makedirs(self.icons_dir, exist_ok=True)
         
         # ============================================================
-        # CUSTOM EXPLORER - GOOGLE SESSION ENGINE
+        # MOTOR DO NAVEGADOR (Isolado)
+        # Mantém intactas as sessões do Google e configs do WhatsApp
         # ============================================================
+        self.browser_engine = BrowserEngine(self)
+        self.profile = self.browser_engine.get_profile()
+        self.storage_path = self.browser_engine.storage_path
 
-        app_data = os.getenv("LOCALAPPDATA")
-
-        self.old_storage_path = os.path.join(
-            app_data,
-            "FiuzaTechnology",
-            "StandaloneHub",
-            "BrowserSession"
-        )
-
-        self.storage_path = os.path.join(
-            app_data,
-            "FiuzaTechnology",
-            "CustomExplorer",
-            "BrowserSession"
-        )
-
-        # Migração automática da sessão antiga
-        if os.path.exists(self.old_storage_path) and not os.path.exists(self.storage_path):
-
-            try:
-                os.makedirs(
-                    os.path.dirname(self.storage_path),
-                    exist_ok=True
-                )
-
-                shutil.copytree(
-                    self.old_storage_path,
-                    self.storage_path
-                )
-
-                print("[SESSION] Sessão antiga migrada para Custom Explorer")
-
-            except Exception as e:
-                print("[SESSION MIGRATION ERROR]", e)
-
-        os.makedirs(
-            self.storage_path,
-            exist_ok=True
-        )
-
-        # ==========================================================
-        # PERSISTÊNCIA REAL GOOGLE / YOUTUBE
-        # ==========================================================
-
-        self.profile = QWebEngineProfile(
-            "CustomExplorer",
-            self
-        )
-
-        # usa a pasta correta persistente
-        self.profile.setPersistentStoragePath(
-            self.storage_path
-        )
-
-        self.profile.setCachePath(
-            os.path.join(
-                self.storage_path,
-                "cache"
-            )
-        )
-
-        # Mantém login Google
-        self.profile.setPersistentCookiesPolicy(
-            QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
-        )
-
-        # Permissões
-        self.profile.setPersistentPermissionsPolicy(
-            QWebEngineProfile.PersistentPermissionsPolicy.StoreOnDisk
-        )
-
-        # Cache Chromium
-        self.profile.setHttpCacheType(
-            QWebEngineProfile.HttpCacheType.DiskHttpCache
-        )
-
-        self.profile.setHttpUserAgent(
-            QWebEngineProfile.defaultProfile().httpUserAgent()
-        )
-
-        self.profile.setHttpAcceptLanguage(
-            "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
-        )
-        
-        self.interceptor = HeaderInterceptor()
-        
-        self.profile.setUrlRequestInterceptor(
-            self.interceptor
-        )
-
-        # Segurança Web
-        settings = self.profile.settings()
-        
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture,
-            False
-        )
-
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.FullScreenSupportEnabled,
-            True
-        )
-
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.ErrorPageEnabled,
-            True
-        )
-
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.JavascriptEnabled,
-            True
-        )
-
-        settings.setAttribute(
-           QWebEngineSettings.WebAttribute.LocalStorageEnabled,
-           True
-        )
-
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.WebGLEnabled,
-            True
-        )
-
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled,
-            True
-        )
-
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.WebRTCPublicInterfacesOnly,
-            True
-        )
-
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard,
-            True
-        )
-
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript,
-            True
-        )
-
-        print(
-            "[SESSION] Custom Explorer profile persistente carregado:",
-            self.storage_path
-        )
-        
-        # Configurações de Navegador
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.WebRTCPublicInterfacesOnly, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript, True)
-
-        # --- RESTANTE DO SEU INIT ORIGINAL ---
+        # ============================================================
+        # VARIÁVEIS E PRESETS ORIGINAIS
+        # ============================================================
         self.presets = {"Padrão (preto/branco)": {"theme": "#242120", "accent": "#d9d9d9"}, "Verde": {"theme": "#0f2419", "accent": "#12d97c"}, "Vermelho": {"theme": "#270d0d", "accent": "#d91e10"}, "Azul Claro": {"theme": "#0d2721", "accent": "#0dd9a6"}, "Azul Escuro": {"theme": "#0d0d27", "accent": "#0d0dd9"}, "Laranja": {"theme": "#271a0c", "accent": "#d9790c"}, "Amarelo": {"theme": "#27270c", "accent": "#d9d9d9"}, "Roxo Claro": {"theme": "#270d27", "accent": "#d90ccf"}, "Rosa": {"theme": "#270d14", "accent": "#d90c3c"}, "Branco": {"theme": "#d6dcd1", "accent": "#ffffff"}}
         self.current_page, self.items_per_page, self.is_restoring, self.search_filter, self.is_wp_light = 0, 8, False, "", False
         self.load_settings()
@@ -230,10 +66,8 @@ class StandaloneHub(QMainWindow):
         # APLICA ICONE SALVO
         try:
             icon_path = os.path.join(self.icons_dir, self.app_icon)
-
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
-
         except Exception as e:
             print("[ICON ERROR]", e)
         
@@ -327,7 +161,6 @@ class StandaloneHub(QMainWindow):
 
         self.theme_btn.setGraphicsEffect(shadow)
         
-
         self.theme_btn.setParent(self.bottom_bar_widget)
         self.theme_btn.move(
             (self.bottom_bar_widget.width() - 40) // 2,
@@ -349,39 +182,35 @@ class StandaloneHub(QMainWindow):
         self.mouse_check_timer.timeout.connect(self.check_mouse_position_for_favorites)
         self.mouse_check_timer.start()
 
+        # Atalhos existentes
         self.shortcut_right = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
         self.shortcut_right.activated.connect(self.safe_next_page)
         self.shortcut_left = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
         self.shortcut_left.activated.connect(self.safe_prev_page)
         self.shortcut_esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.shortcut_esc.activated.connect(self.safe_close_search)
+        
+        # --- NOVO: Atalho da Command Palette ---
+        self.shortcut_cmd = QShortcut(QKeySequence("Ctrl+K"), self)
+        self.shortcut_cmd.activated.connect(self.show_command_palette)
 
         self.showMaximized()
         if getattr(self, 'security_settings', {}) and self.security_settings.get("enabled", False):
             self.show_lock_screen()
 
+# ===================================================================================================
+# TODOS OS OUTROS MÉTODOS (force_clean_session, logout_google, apply_styles, etc) CONTINUAM IGUAIS
+# Você não precisa alterar absolutamente nada abaixo da função __init__
+# ===================================================================================================
+
     def force_clean_session(self):
-
         try:
-
             self.profile.cookieStore().deleteAllCookies()
-
             self.profile.clearHttpCache()
-
             self.profile.clearAllVisitedLinks()
-
-
-            print(
-                "[SESSION] Cookies removidos"
-            )
-
-
+            print("[SESSION] Cookies removidos")
         except Exception as e:
-
-            print(
-                "[SESSION CLEAN ERROR]",
-                e
-            )
+            print("[SESSION CLEAN ERROR]", e)
 
     def logout_google(self):
 
@@ -614,6 +443,19 @@ class StandaloneHub(QMainWindow):
 
     def safe_close_search(self):
         if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible(): self.toggle_fav_search()
+
+    def show_command_palette(self):
+        """Abre a barra de pesquisa rápida global (Ctrl+K)"""
+        # Verifica com segurança se a tela de bloqueio existe e está visível
+        try:
+            if hasattr(self, 'lock_screen') and self.lock_screen is not None and self.lock_screen.isVisible():
+                return
+        except RuntimeError:
+            # O objeto C++ já foi deletado da memória (a tela foi desbloqueada)
+            self.lock_screen = None
+            
+        palette = CommandPaletteDialog(self)
+        palette.exec()
 
     def filter_favorites(self, text): self.update_favorites_panel(text)
 
@@ -1348,65 +1190,37 @@ class StandaloneHub(QMainWindow):
             self.search_bar.blockSignals(False)
             self.search_bar.clearFocus() 
             
-        browser = QWebEngineView(self)
+        # Instancia a nossa nova Aba Customizada e Inteligente
+        browser = BrowserTab(self, self.profile, url, title, is_pinned, lazy_load)
         
-        browser.loadStarted.connect(lambda: print(f"[DEBUG] Iniciando carregamento: {url}"))
-        browser.loadFinished.connect(lambda ok: print(f"[DEBUG] Carregamento concluído. Sucesso: {ok}"))
-        
-        page = QWebEnginePage(self.profile, browser)
-
-        browser.setPage(page)
-
-        if "whatsapp.com" in url:
-
-            page.profile().setHttpUserAgent(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        
-        browser.setProperty("original_url", url)
-        browser.setProperty("original_label", title)
-        browser.setProperty("is_pinned", is_pinned)
-        
-        browser.titleChanged.connect(lambda t, b=browser: self.on_title_changed(b, t))
-        browser.page().zoomFactorChanged.connect(lambda factor, b=browser: self.on_zoom_changed(b, factor))
-        browser.loadFinished.connect(lambda ok, b=browser: self.apply_whatsapp_theme_on_load(b))
-        
+        # Adiciona no TabWidget
         index = self.tabs.addTab(browser, f"📌 {title[:18]}..." if is_pinned else title[:20])
-        if lazy_load: browser.setProperty("needs_load", True)
-        else:
-            browser.setProperty("needs_load", False)
-            browser.setUrl(QUrl(url))
-            if url in self.zoom_settings: browser.setZoomFactor(self.zoom_settings[url])
+        
+        if not lazy_load:
             self.tabs.setCurrentIndex(index)
-        if not getattr(self, 'is_restoring', False) and not url.startswith("about:"): self.log_history(title, url)
-        if not getattr(self, 'is_restoring', False): self.save_settings(force=True)
+            
+        if not getattr(self, 'is_restoring', False) and not url.startswith("about:"): 
+            self.log_history(title, url)
+            
+        if not getattr(self, 'is_restoring', False): 
+            self.save_settings(force=True)
 
-    def on_title_changed(self, browser, title):
+    def update_tab_title(self, browser, title):
+        """Método simples chamado pela própria aba quando ela troca de nome"""
         index = self.tabs.indexOf(browser)
         if index != -1:
             title = "Navegação" if not title.strip() else title
             browser.setProperty("original_label", title)
             self.tabs.setTabText(index, f"📌 {title[:18]}..." if browser.property("is_pinned") else title[:20])
-            if getattr(self, 'save_tabs_enabled', False) and not getattr(self, 'is_restoring', False): self.save_settings(force=True)
-
-    def apply_whatsapp_theme_on_load(self, browser):
-        if "whatsapp.com" in browser.url().toString():
-            browser.page().runJavaScript(f"(function() {{ document.body.classList.remove('theme-{'light' if not QColor(self.get_active_theme_color()).lightness() > 128 else 'dark'}'); document.body.classList.add('theme-{'light' if QColor(self.get_active_theme_color()).lightness() > 128 else 'dark'}'); document.documentElement.style.colorScheme = '{'light' if QColor(self.get_active_theme_color()).lightness() > 128 else 'dark'}'; }})();")
+            if getattr(self, 'save_tabs_enabled', False) and not getattr(self, 'is_restoring', False): 
+                self.save_settings(force=True)
 
     def sync_all_whatsapp_themes(self):
+        """Apenas manda as abas atualizarem seus próprios temas"""
         for i in range(1, self.tabs.count()):
-            if isinstance(self.tabs.widget(i), QWebEngineView): self.apply_whatsapp_theme_on_load(self.tabs.widget(i))
-
-    def on_zoom_changed(self, browser, factor):
-        try:
-            url = browser.property("original_url") or browser.url().toString()
-            if url and url != "about:blank":
-                self.zoom_settings[url] = factor
-                if getattr(self, 'save_tabs_enabled', False): self.save_settings(force=True)
-        except RuntimeError: pass
+            widget = self.tabs.widget(i)
+            if isinstance(widget, BrowserTab): 
+                widget.apply_whatsapp_theme(ok=True)
 
     def track_zoom_levels(self):
         for i in range(1, self.tabs.count()):

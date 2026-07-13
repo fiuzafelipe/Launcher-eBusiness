@@ -2,8 +2,8 @@ import os
 import hashlib
 from PyQt6.QtWidgets import (QApplication, QPushButton, QLabel, QFrame, QGridLayout, 
                              QMenu, QMessageBox, QVBoxLayout, QWidget, QTabWidget, 
-                             QLineEdit, QDialog, QHBoxLayout, QFileDialog)
-from PyQt6.QtCore import Qt, QMimeData, QUrl, QPoint, QTimer, QPointF
+                             QLineEdit, QDialog, QHBoxLayout, QFileDialog, QGraphicsDropShadowEffect)
+from PyQt6.QtCore import Qt, QMimeData, QUrl, QPoint, QTimer, QPointF, QPropertyAnimation, QRect, QEasingCurve
 from PyQt6.QtGui import QPixmap, QColor, QDrag, QPainter, QIcon, QShortcut, QKeySequence, QPainterPath, QPen
 from PyQt6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -81,6 +81,17 @@ class DraggableToolButton(QFrame):
         self.internal_layout.addWidget(self.title_lbl)
         self.internal_layout.addWidget(self.subtitle_lbl)
         self.update_star_visual()
+
+        # --- EFEITO FLUTUANTE E SOMBRA (INICIALIZAÇÃO) ---
+        self.shadow = QGraphicsDropShadowEffect(self)
+        self.shadow.setBlurRadius(10)
+        self.shadow.setOffset(0, 5)
+        self.shadow.setColor(QColor(0, 0, 0, 80)) 
+        self.setGraphicsEffect(self.shadow)
+
+        self.anim_geometry = QPropertyAnimation(self, b"geometry")
+        self.anim_geometry.setDuration(150)
+        self.anim_geometry.setEasingCurve(QEasingCurve.Type.OutQuad)
 
     def refresh_icon(self):
         icon_name = f"{self.item_data['label'].lower()}.png"
@@ -205,6 +216,35 @@ class DraggableToolButton(QFrame):
                     except: pass
                 else: 
                     self.hub.open_web_tab(url, self.item_data.get("label", ""))
+
+    # --- EVENTOS DE ANIMAÇÃO AO PASSAR O MOUSE ---
+    def enterEvent(self, event):
+        rect = self.geometry()
+        self.anim_geometry.setStartValue(rect)
+        # Sobe o botão em 5 pixels
+        self.anim_geometry.setEndValue(QRect(rect.x(), rect.y() - 5, rect.width(), rect.height()))
+        self.anim_geometry.start()
+        
+        # Intensifica a sombra
+        self.shadow.setBlurRadius(20)
+        self.shadow.setOffset(0, 8)
+        self.shadow.setColor(QColor(0, 0, 0, 150))
+        
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        rect = self.geometry()
+        self.anim_geometry.setStartValue(rect)
+        # Retorna o botão para a posição original
+        self.anim_geometry.setEndValue(QRect(rect.x(), rect.y() + 5, rect.width(), rect.height()))
+        self.anim_geometry.start()
+        
+        # Suaviza a sombra
+        self.shadow.setBlurRadius(10)
+        self.shadow.setOffset(0, 5)
+        self.shadow.setColor(QColor(0, 0, 0, 80))
+        
+        super().leaveEvent(event)
 
 
 class MediaViewerDialog(QDialog):
