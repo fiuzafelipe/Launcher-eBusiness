@@ -37,8 +37,7 @@ class AnimatedLogoButton(QPushButton):
     def __init__(self, image_path, parent_hub=None):
         super().__init__(parent_hub)
         self.hub = parent_hub
-        # Reduzido levemente para garantir espaço perfeito para a caixa de boas vindas
-        self.setFixedSize(110, 110) 
+        self.setFixedSize(120, 120) 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet("background: transparent; border: none; outline: none;")
         self.setToolTip("Aplicação desenvolvida por Felipe Fiuza! Bom uso.")
@@ -62,10 +61,10 @@ class AnimatedLogoButton(QPushButton):
         if os.path.exists(image_path):
             self.original_pixmap = QPixmap(image_path)
         else:
-            self.original_pixmap = QPixmap(90, 90)
+            self.original_pixmap = QPixmap(100, 100)
             self.original_pixmap.fill(Qt.GlobalColor.transparent)
             
-        self.pixmap = self.original_pixmap.scaled(90, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        self.pixmap = self.original_pixmap.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
         self.update()
 
     def update_scale(self, value):
@@ -133,6 +132,8 @@ class StandaloneHub(QMainWindow):
 
         self.presets = {"Padrão (preto/branco)": {"theme": "#242120", "accent": "#d9d9d9"}, "Verde": {"theme": "#0f2419", "accent": "#12d97c"}, "Vermelho": {"theme": "#270d0d", "accent": "#d91e10"}, "Azul Claro": {"theme": "#0d2721", "accent": "#0dd9a6"}, "Azul Escuro": {"theme": "#0d0d27", "accent": "#0d0dd9"}, "Laranja": {"theme": "#271a0c", "accent": "#d9790c"}, "Amarelo": {"theme": "#27270c", "accent": "#d9d9d9"}, "Roxo Claro": {"theme": "#270d27", "accent": "#d90ccf"}, "Rosa": {"theme": "#270d14", "accent": "#d90c3c"}, "Branco": {"theme": "#d6dcd1", "accent": "#ffffff"}}
         self.current_page, self.items_per_page, self.is_restoring, self.search_filter, self.is_wp_light = 0, 8, False, "", False
+        
+        # OBRIGATÓRIO: Carrega configurações antes de gerar UI
         self.load_settings()
         
         try:
@@ -225,6 +226,7 @@ class StandaloneHub(QMainWindow):
         
         self.main_layout.addWidget(self.bottom_bar_widget)
         
+        # Constrói UI principal
         self.create_home_tab()
         self.apply_styles()
         
@@ -254,6 +256,9 @@ class StandaloneHub(QMainWindow):
         if getattr(self, 'security_settings', {}) and self.security_settings.get("enabled", False):
             self.show_lock_screen()
 
+    # =========================================================================================
+    # FUNÇÕES PRINCIPAIS DE NAVEGAÇÃO E SISTEMA
+    # =========================================================================================
     def force_clean_session(self):
         try:
             self.profile.cookieStore().deleteAllCookies()
@@ -402,7 +407,8 @@ class StandaloneHub(QMainWindow):
             self.lock_screen = None
         CommandPaletteDialog(self).exec()
 
-    def filter_favorites(self, text): self.update_favorites_panel(text)
+    def filter_favorites(self, text): 
+        self.update_favorites_panel(text)
 
     def safe_next_page(self):
         if self.tabs.currentIndex() == 0:
@@ -424,7 +430,7 @@ class StandaloneHub(QMainWindow):
     def next_page(self):
         filtered_list = self.buttons_list
         if self.search_filter:
-            filtered_list = [b for b in self.buttons_list if self.search_filter.strip().lower() in b["label"].lower()]
+            filtered_list = [b for b in self.buttons_list if self.search_filter.strip().lower() in b.get("label", "").lower()]
         max_pages = max(0, (len(filtered_list) - 1) // self.items_per_page)
         if self.current_page < max_pages:
             self.current_page += 1
@@ -565,9 +571,7 @@ class StandaloneHub(QMainWindow):
             self.lbl_status.setText("Download concluído com sucesso!")
             QTimer.singleShot(4000, lambda: self.lbl_status.setText("") if "concluído" in self.lbl_status.text() else None)
 
-    # =========================================================================================
-    # CAIXA DE EDIÇÃO DE NOME E BOAS VINDAS
-    # =========================================================================================
+    # --- MENU E CONFIGURAÇÕES DE PERFIL ---
     def edit_user_name(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Perfil")
@@ -582,7 +586,6 @@ class StandaloneHub(QMainWindow):
         
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(20, 20, 20, 20)
-        
         layout.addWidget(QLabel("Como você quer ser chamado?"))
         
         input_name = QLineEdit(getattr(self, 'user_name', 'Felipe Fiuza'))
@@ -605,35 +608,6 @@ class StandaloneHub(QMainWindow):
         if hasattr(self, 'welcome_label'):
             name = getattr(self, 'user_name', 'Felipe Fiuza')
             self.welcome_label.setText(f"Bem vindo(a): {name}")
-
-    def handle_tab_click(self, index):
-        pass
-
-    def close_tab(self, index):
-        if index != 0:
-            if self.tabs.widget(index): self.tabs.widget(index).deleteLater()
-            self.tabs.removeTab(index)
-            if not getattr(self, 'is_restoring', False): self.save_settings(force=True)
-
-    def restore_tabs(self):
-        self.is_restoring = True
-        for t in getattr(self, 'pinned_tabs', []): self.open_web_tab(t["url"], t["label"], is_pinned=True, lazy_load=True)
-        if getattr(self, 'save_tabs_enabled', False) and self.opened_tabs_urls:
-            for t in list(self.opened_tabs_urls):
-                if not any(p["url"] == t["url"] for p in getattr(self, 'pinned_tabs', [])): self.open_web_tab(t["url"], t["label"], is_pinned=False, lazy_load=False)
-        QTimer.singleShot(200, lambda: [setattr(self, 'is_restoring', False), self.tabs.setCurrentIndex(0)])
-
-    def restore_extensions_state(self):
-        from ui.dialogs import ExtensionsDialog
-        dummy_dialog = ExtensionsDialog(self, None) 
-        
-        status = getattr(self, 'extensions_status', {})
-        for ext_name, is_active in status.items():
-            if is_active:
-                if ext_name == "AdBlocker Global":
-                    dummy_dialog.toggle_adblock(True)
-                elif ext_name == "Dark Mode Universal":
-                    dummy_dialog.toggle_darkmode(True)
 
     def create_home_tab(self):
         if hasattr(self, 'home_widget') and self.home_widget:
@@ -676,14 +650,11 @@ class StandaloneHub(QMainWindow):
         
         self.grid_container_widget.setLayout(content_layout)
         
-        # --- 1. BARRA SUPERIOR ---
         top_bar_layout = QHBoxLayout()
         top_bar_layout.setContentsMargins(0, 0, 0, 0)
-        
         left_spacer = QWidget()
         left_spacer.setFixedSize(40, 40)
         top_bar_layout.addWidget(left_spacer, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        
         top_bar_layout.addStretch() 
         
         png_name = getattr(self, 'app_icon', 'Custom Transparent.ico').replace(".ico", ".png")
@@ -694,17 +665,14 @@ class StandaloneHub(QMainWindow):
         top_bar_layout.addWidget(self.animated_logo, alignment=Qt.AlignmentFlag.AlignCenter)
         
         top_bar_layout.addStretch()
-        
         self.btn_config_top = QPushButton("⚙️")
         self.btn_config_top.setFixedSize(40, 40)
         self.btn_config_top.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_config_top.setToolTip("Configurações")
         self.btn_config_top.clicked.connect(lambda: SettingsDialog(self).exec())
         top_bar_layout.addWidget(self.btn_config_top, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
-        
         content_layout.addLayout(top_bar_layout)
 
-        # --- 2. CAIXA DE PESQUISA ---
         control_panel_layout = QVBoxLayout()
         control_panel_layout.setContentsMargins(0, 0, 0, 0)
         control_panel_layout.setSpacing(0)
@@ -734,7 +702,6 @@ class StandaloneHub(QMainWindow):
         
         content_layout.addSpacing(5) 
         
-        # --- 3. GRID DE BOTÕES ---
         self.grid_layout = QGridLayout()
         self.grid_layout.setSpacing(15)
         self.grid_layout.setContentsMargins(20, 0, 20, 0)
@@ -745,22 +712,20 @@ class StandaloneHub(QMainWindow):
         grid_container_hbox.addStretch()
         content_layout.addLayout(grid_container_hbox)
 
-        # --- 4. CAIXA DE BOAS VINDAS ELEGANTE ---
-        content_layout.addSpacing(5) # Diminuído espaço superior da caixa
+        content_layout.addSpacing(10) # <-- Ajuste refinado do Bem-Vindo
         
         welcome_layout = QHBoxLayout()
         welcome_layout.setContentsMargins(0, 0, 0, 0)
         
         self.welcome_label = QLabel()
         self.welcome_label.setObjectName("WelcomeLabel")
-        self.welcome_label.setFixedHeight(38) # Ajustado para não achatar os outros controles
+        self.welcome_label.setFixedHeight(45) 
         self.welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.welcome_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.welcome_label.setToolTip("Dê dois cliques rápidos para alterar o seu nome")
         
         shadow_welcome = QGraphicsDropShadowEffect()
-        shadow_welcome.setBlurRadius(20)
-        shadow_welcome.setOffset(0, 3)
+        shadow_welcome.setBlurRadius(25)
+        shadow_welcome.setOffset(0, 5)
         shadow_welcome.setColor(QColor(0, 0, 0, 150))
         self.welcome_label.setGraphicsEffect(shadow_welcome)
         
@@ -771,12 +736,11 @@ class StandaloneHub(QMainWindow):
         welcome_layout.addStretch()
         
         content_layout.addLayout(welcome_layout)
-        content_layout.addSpacing(5) # Diminuído espaço inferior da caixa
-        # =========================================================
+        content_layout.addSpacing(15) 
 
         self.nav_container = QWidget()
         nav_layout = QHBoxLayout(self.nav_container)
-        nav_layout.setContentsMargins(0, 0, 0, 0) # Margem zerada para ganhar espaço
+        nav_layout.setContentsMargins(0, 0, 0, 0) 
         nav_layout.addStretch()
         nav_style = f"QPushButton {{ background-color: {self.accent_color}; border: 1px solid rgba(0,0,0,0.25); color: #07080a; font-weight: bold; font-size: 15px; border-radius: 5px; }} QPushButton:hover {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40); color: {self.accent_color}; border-color: rgba(255,255,255,0.5); }} QPushButton:disabled {{ border: 1px solid rgba(0,0,0,0.1); color: rgba(120, 120, 120, 0.5); background-color: rgba(0, 0, 0, 0.15); }}"
         
@@ -813,6 +777,7 @@ class StandaloneHub(QMainWindow):
         home_vertical_layout.addWidget(scroll_area)
         
         home_vertical_layout.addWidget(self.nav_container)
+        self.nav_container.raise_() 
 
         self.tabs.insertTab(0, self.home_widget, "Home")
         self.update_favorites_panel()
@@ -884,6 +849,14 @@ class StandaloneHub(QMainWindow):
             logo_path = os.path.join(self.icons_dir, png_name)
             self.animated_logo.update_image(logo_path)
 
+        if hasattr(self, 'fav_panel_widget'):
+            self.fav_panel_widget.setStyleSheet(f"""
+                QWidget#FavPanelWidget {{
+                    background-color: rgba(15, 18, 25, 0.95);
+                    border-bottom: 2px solid {accent};
+                }}
+            """)
+
         self.current_text_color = text_color
         self.update_welcome_text()
         
@@ -948,14 +921,9 @@ class StandaloneHub(QMainWindow):
         self.auto_save = (state == 2 or state == Qt.CheckState.Checked)
         if self.auto_save: self.save_settings(force=True)
 
-    def reorder_buttons(self, src_idx, target_idx):
-        self.buttons_list.insert(target_idx, self.buttons_list.pop(src_idx))
-        self.save_settings(force=True)
-        self.filter_buttons_by_search(self.search_filter)
-
     def filter_buttons_by_search(self, text):
         self.search_filter = text
-        filtered_list = [b for b in self.buttons_list if self.search_filter.strip().lower() in b["label"].lower()]
+        filtered_list = [b for b in self.buttons_list if self.search_filter.strip().lower() in b.get("label", "").lower()]
         self.render_grid(self.grid_layout, filtered_list)
         
         max_pages = max(0, (len(filtered_list) - 1) // self.items_per_page)
@@ -1057,6 +1025,13 @@ class StandaloneHub(QMainWindow):
         self.update_favorites_panel()
 
     def open_web_tab(self, url, title, is_pinned=False, lazy_load=False):
+        if url.lower().endswith(('.exe', '.bat', '.cmd', '.lnk')) or os.path.isfile(url):
+            try:
+                os.startfile(url)
+            except Exception as e:
+                QMessageBox.warning(self, "Erro ao abrir o programa", f"Falha ao iniciar:\n\n{str(e)}")
+            return 
+
         self.search_filter = ""
         if hasattr(self, 'search_bar') and self.search_bar:
             self.search_bar.blockSignals(True)
@@ -1122,10 +1097,7 @@ class StandaloneHub(QMainWindow):
             title = browser.property("original_label") or "Navegação"
             is_pinned = browser.property("is_pinned")
             self.tabs.setTabText(index, f"📌 {title[:18]}..." if is_pinned else f"{title[:20]}")
-            
-    # =========================================================================================
-    # FUNÇÕES ADICIONAIS
-    # =========================================================================================
+
     def sync_all_whatsapp_themes(self):
         for i in range(1, self.tabs.count()):
             widget = self.tabs.widget(i)
@@ -1150,3 +1122,62 @@ class StandaloneHub(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.security_settings = dialog.final_data
             self.save_settings(force=True)
+
+    def open_swap_dialog(self, item_data):
+        from ui.dialogs import SwapButtonDialog
+        dialog = SwapButtonDialog(self, item_data)
+        dialog.exec()
+        
+    def swap_items(self, src_idx, target_idx):
+        all_items = self.buttons_list + getattr(self, 'folders_list', [])
+        if src_idx < 0 or src_idx >= len(all_items) or target_idx < 0 or target_idx >= len(all_items): return
+            
+        all_items[src_idx], all_items[target_idx] = all_items[target_idx], all_items[src_idx]
+        
+        new_buttons = []
+        new_folders = []
+        for item in all_items:
+            if item.get("type") == "folder":
+                new_folders.append(item)
+            else:
+                new_buttons.append(item)
+                
+        self.buttons_list = new_buttons
+        self.folders_list = new_folders
+        
+        self.save_settings(force=True)
+        self.filter_buttons_by_search(self.search_filter)
+        
+        from PyQt6.QtWidgets import QApplication
+        from ui.components import FolderPanelWidget
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, FolderPanelWidget):
+                widget.refresh_grid()
+                
+    def handle_tab_click(self, index):
+        pass
+
+    def close_tab(self, index):
+        if index != 0:
+            if self.tabs.widget(index): self.tabs.widget(index).deleteLater()
+            self.tabs.removeTab(index)
+            if not getattr(self, 'is_restoring', False): self.save_settings(force=True)
+
+    def restore_tabs(self):
+        self.is_restoring = True
+        for t in getattr(self, 'pinned_tabs', []): self.open_web_tab(t["url"], t["label"], is_pinned=True, lazy_load=True)
+        if getattr(self, 'save_tabs_enabled', False) and self.opened_tabs_urls:
+            for t in list(self.opened_tabs_urls):
+                if not any(p["url"] == t["url"] for p in getattr(self, 'pinned_tabs', [])): self.open_web_tab(t["url"], t["label"], is_pinned=False, lazy_load=False)
+        QTimer.singleShot(200, lambda: [setattr(self, 'is_restoring', False), self.tabs.setCurrentIndex(0)])
+
+    def restore_extensions_state(self):
+        from ui.dialogs import ExtensionsDialog
+        dummy_dialog = ExtensionsDialog(self, None) 
+        status = getattr(self, 'extensions_status', {})
+        for ext_name, is_active in status.items():
+            if is_active:
+                if ext_name == "AdBlocker Global":
+                    dummy_dialog.toggle_adblock(True)
+                elif ext_name == "Dark Mode Universal":
+                    dummy_dialog.toggle_darkmode(True)

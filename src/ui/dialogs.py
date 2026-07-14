@@ -7,7 +7,7 @@ import calendar
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, 
                              QPushButton, QLineEdit, QLabel, QFileDialog,
                              QMessageBox, QGridLayout, QComboBox, QScrollArea, QWidget, QApplication,
-                             QListWidget, QListWidgetItem, QGraphicsDropShadowEffect)
+                             QListWidget, QListWidgetItem, QGraphicsDropShadowEffect, QCheckBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QIcon
 
@@ -504,7 +504,7 @@ class AboutDialog(QDialog):
 class ToolboxDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
-        self.parent_hub = parent # <-- CORREÇÃO: Variável segura
+        self.parent_hub = parent 
         self.setWindowTitle("Adicionar ao Toolbox")
         self.setFixedWidth(420)
         self.setWindowOpacity(0.92)
@@ -515,6 +515,7 @@ class ToolboxDialog(QDialog):
             QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 12px; font-weight: bold; }}
             QLineEdit {{ background-color: #161b24; border: 1px solid {accent}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; }}
             QPushButton {{ background-color: {accent}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
+            QCheckBox {{ color: {accent}; font-weight: bold; font-family: 'Segoe UI'; }}
         """)
         
         form_layout = QFormLayout(self)
@@ -525,13 +526,24 @@ class ToolboxDialog(QDialog):
         self.input_sub = QLineEdit()
         self.input_url = QLineEdit()
         
+        # NOVO: Suporte a Executáveis
+        self.check_exe = QCheckBox("Este botão abre um programa (.exe)?")
+        self.check_exe.stateChanged.connect(self.toggle_exe_mode)
+        
+        self.btn_search_exe = QPushButton("📂 Procurar Arquivo")
+        self.btn_search_exe.setStyleSheet("background-color: #161b24; color: #fff; border: 1px solid #232a38;")
+        self.btn_search_exe.setVisible(False)
+        self.btn_search_exe.clicked.connect(self.pick_exe)
+        
         self.btn_img = QPushButton("🖼️ Adicionar Imagem (Opcional)")
         self.selected_img = ""
         self.btn_img.clicked.connect(self.pick_img)
         
         form_layout.addRow(QLabel("Nome do Botão:"), self.input_name)
         form_layout.addRow(QLabel("Subtítulo:"), self.input_sub)
-        form_layout.addRow(QLabel("URL do Site:"), self.input_url)
+        form_layout.addRow(self.check_exe)
+        form_layout.addRow(QLabel("Destino:"), self.input_url)
+        form_layout.addRow("", self.btn_search_exe) # Espaço para alinhar com o input
         form_layout.addRow(self.btn_img)
         
         btn_box = QHBoxLayout()
@@ -545,6 +557,19 @@ class ToolboxDialog(QDialog):
         btn_box.addWidget(btn_save)
         btn_box.addWidget(btn_back)
         form_layout.addRow(btn_box)
+
+    def toggle_exe_mode(self, state):
+        is_exe = (state == 2)
+        self.btn_search_exe.setVisible(is_exe)
+        if is_exe:
+            self.input_url.setPlaceholderText("Ex: C:\\Program Files\\AnyDesk\\AnyDesk.exe")
+        else:
+            self.input_url.setPlaceholderText("Ex: https://google.com")
+
+    def pick_exe(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Selecionar Programa", "C:\\", "Executáveis (*.exe *.bat *.cmd *.lnk)")
+        if path:
+            self.input_url.setText(path)
 
     def pick_img(self):
         path, _ = QFileDialog.getOpenFileName(self, "Selecionar Ícone", "", "Images (*.png *.jpg *.jpeg)")
@@ -581,6 +606,7 @@ class EditButtonDialog(QDialog):
             QLineEdit {{ background-color: #161b24; border: 1px solid {self.parent_hub.accent_color}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; }}
             QLineEdit:focus {{ border: 1px solid {self.parent_hub.accent_color}; }}
             QPushButton {{ font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
+            QCheckBox {{ color: {self.parent_hub.accent_color}; font-weight: bold; font-family: 'Segoe UI'; }}
         """)
         form_layout = QFormLayout(self)
         form_layout.setContentsMargins(20, 20, 20, 20)
@@ -589,14 +615,31 @@ class EditButtonDialog(QDialog):
         self.input_name = QLineEdit(item_data["label"])
         self.input_subtitle = QLineEdit(item_data.get("subtitle", ""))
         self.input_url = QLineEdit(item_data["url"])
+        
+        self.check_exe = QCheckBox("Este botão abre um programa (.exe)?")
+        self.check_exe.stateChanged.connect(self.toggle_exe_mode)
+        
+        self.btn_search_exe = QPushButton("📂 Procurar Arquivo")
+        self.btn_search_exe.setStyleSheet("background-color: #161b24; border: 1px solid #232a38; color: #fff;")
+        self.btn_search_exe.setVisible(False)
+        self.btn_search_exe.clicked.connect(self.pick_exe)
+        
+        # Verifica se já é um .exe para ativar o checkbox
+        if self.input_url.text().lower().endswith(('.exe', '.bat', '.cmd', '.lnk')):
+            self.check_exe.setChecked(True)
+        
         self.btn_img = QPushButton("🖼️ Alterar Imagem")
         self.btn_img.setStyleSheet("background-color: #161b24; border: 1px solid #232a38; color: #fff; text-align: center;")
         self.selected_img = ""
         self.btn_img.clicked.connect(self.pick_img)
+        
         form_layout.addRow(QLabel("Nome do Botão:"), self.input_name)
         form_layout.addRow(QLabel("Nome do Subtítulo:"), self.input_subtitle)
-        form_layout.addRow(QLabel("URL do Site:"), self.input_url)
+        form_layout.addRow(self.check_exe)
+        form_layout.addRow(QLabel("Destino:"), self.input_url)
+        form_layout.addRow("", self.btn_search_exe)
         form_layout.addRow(self.btn_img)
+        
         btn_box = QHBoxLayout()
         btn_save = QPushButton("Salvar")
         btn_save.setStyleSheet(f"background-color: {self.parent_hub.accent_color}; color: #07080a; font-weight: bold;")
@@ -607,6 +650,15 @@ class EditButtonDialog(QDialog):
         btn_box.addWidget(btn_save)
         btn_box.addWidget(btn_back)
         form_layout.addRow(btn_box)
+
+    def toggle_exe_mode(self, state):
+        is_exe = (state == 2)
+        self.btn_search_exe.setVisible(is_exe)
+
+    def pick_exe(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Selecionar Programa", "C:\\", "Executáveis (*.exe *.bat *.cmd *.lnk)")
+        if path:
+            self.input_url.setText(path)
 
     def pick_img(self):
         path, _ = QFileDialog.getOpenFileName(self, "Selecionar Ícone", "", "Images (*.png *.jpg *.jpeg)")
@@ -1377,3 +1429,79 @@ class ExtensionsDialog(QDialog):
         """
         removal_code = "if (window.fiuzaAdSkipper) { clearInterval(window.fiuzaAdSkipper); window.fiuzaAdSkipper = null; }"
         self.inject_global_script('fiuza-adblock', js_code, removal_code, enable)
+
+class SwapButtonDialog(QDialog):
+    def __init__(self, parent_hub, current_item):
+        super().__init__(parent_hub)
+        self.hub = parent_hub
+        self.current_item = current_item
+        
+        self.setWindowTitle("Substituir Item")
+        self.setFixedWidth(400)
+        self.setWindowOpacity(0.95)
+        
+        accent = self.hub.accent_color
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {accent}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; }}
+            QComboBox {{ background-color: #161b24; border: 1px solid {accent}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; font-size: 14px; font-weight: bold; }}
+            QComboBox QAbstractItemView {{ background-color: #161b24; color: #fff; selection-background-color: {accent}; selection-color: #000; }}
+            QPushButton {{ background-color: {accent}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
+            QPushButton#btn_cancel {{ background-color: #161b24; color: #fff; border: 1px solid #232a38; }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(25, 25, 25, 25)
+        layout.setSpacing(15)
+        
+        lbl_info = QLabel(f"Substituir o item:\n[ {self.current_item.get('label', '')} ]\n\nPor qual item?")
+        lbl_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl_info)
+        
+        self.combo = QComboBox()
+        self.item_mapping = []
+        
+        # Junta tudo para poder trocar qualquer coisa por qualquer coisa
+        all_items = self.hub.buttons_list + getattr(self.hub, 'folders_list', [])
+        
+        for idx, item in enumerate(all_items):
+            if item == self.current_item: continue
+            page = (idx // self.hub.items_per_page) + 1
+            label_name = item.get('label', 'Sem Nome')
+            tipo = "Pasta" if item.get("type") == "folder" else "Botão"
+            
+            self.combo.addItem(f"[{tipo}] {label_name} (Página {page})")
+            self.item_mapping.append(item)
+            
+        if not self.item_mapping:
+            self.combo.addItem("Nenhum outro item disponível")
+            self.combo.setEnabled(False)
+            
+        layout.addWidget(self.combo)
+        
+        btn_layout = QHBoxLayout()
+        btn_confirm = QPushButton("🔄 Confirmar")
+        btn_confirm.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_confirm.clicked.connect(self.execute_swap)
+        
+        btn_cancel = QPushButton("Voltar")
+        btn_cancel.setObjectName("btn_cancel")
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cancel.clicked.connect(self.reject)
+        
+        btn_layout.addWidget(btn_confirm)
+        btn_layout.addWidget(btn_cancel)
+        layout.addLayout(btn_layout)
+
+    def execute_swap(self):
+        idx = self.combo.currentIndex()
+        if idx >= 0 and self.item_mapping:
+            target_item = self.item_mapping[idx]
+            
+            all_items = self.hub.buttons_list + getattr(self.hub, 'folders_list', [])
+            idx1 = all_items.index(self.current_item)
+            idx2 = all_items.index(target_item)
+            
+            if hasattr(self.hub, 'swap_items'):
+                self.hub.swap_items(idx1, idx2)
+        self.accept()

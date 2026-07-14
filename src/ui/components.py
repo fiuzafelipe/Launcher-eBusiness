@@ -1,15 +1,15 @@
 import os
 import hashlib
+import subprocess
 from PyQt6.QtWidgets import (QApplication, QPushButton, QLabel, QFrame, QGridLayout, 
                              QMenu, QMessageBox, QVBoxLayout, QWidget, QTabWidget, 
                              QLineEdit, QDialog, QHBoxLayout, QFileDialog, QGraphicsDropShadowEffect)
-from PyQt6.QtCore import Qt, QMimeData, QUrl, QPoint, QTimer, QPointF, QPropertyAnimation, QRect, QEasingCurve
+from PyQt6.QtCore import Qt, QMimeData, QUrl, QPoint, QTimer, QPointF, QVariantAnimation, QRect, QEasingCurve
 from PyQt6.QtGui import QPixmap, QColor, QDrag, QPainter, QIcon, QShortcut, QKeySequence, QPainterPath, QPen
 from PyQt6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 
-# Importações do Core
 from core.remote_tools import launch_remote_tool
 from core.image_utils import process_and_save_icon
 
@@ -19,7 +19,7 @@ class DraggableToolButton(QFrame):
         self.item_data = item_data
         self.item_index = item_index
         self.hub = parent_hub
-        self.setAcceptDrops(True)
+        self.setAcceptDrops(True) 
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -52,7 +52,7 @@ class DraggableToolButton(QFrame):
         self.icon_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.icon_lbl.setStyleSheet("background: transparent;")
         
-        icon_name = "folder_icon.png" if self.item_data.get("type") == "folder" else f"{self.item_data['label'].lower()}.png"
+        icon_name = "folder_icon.png" if self.item_data.get("type") == "folder" else f"{self.item_data.get('label', '').lower()}.png"
         icon_path = os.path.join(self.hub.icons_dir, icon_name)
         if os.path.exists(icon_path):
             pixmap = QPixmap(icon_path)
@@ -68,7 +68,7 @@ class DraggableToolButton(QFrame):
         self.icon_layout.addWidget(self.icon_lbl, 0, 0, 2, 3, alignment=Qt.AlignmentFlag.AlignCenter)
         self.internal_layout.addWidget(self.icon_area)
         
-        self.title_lbl = QLabel(self.item_data['label'])
+        self.title_lbl = QLabel(self.item_data.get('label', ''))
         self.title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         
@@ -82,19 +82,19 @@ class DraggableToolButton(QFrame):
         self.internal_layout.addWidget(self.subtitle_lbl)
         self.update_star_visual()
 
-        # --- EFEITO FLUTUANTE E SOMBRA (INICIALIZAÇÃO) ---
         self.shadow = QGraphicsDropShadowEffect(self)
         self.shadow.setBlurRadius(10)
         self.shadow.setOffset(0, 5)
         self.shadow.setColor(QColor(0, 0, 0, 80)) 
         self.setGraphicsEffect(self.shadow)
 
-        self.anim_geometry = QPropertyAnimation(self, b"geometry")
-        self.anim_geometry.setDuration(150)
-        self.anim_geometry.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.anim_lift = QVariantAnimation(self)
+        self.anim_lift.setDuration(150)
+        self.anim_lift.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.anim_lift.valueChanged.connect(self.update_lift)
 
     def refresh_icon(self):
-        icon_name = f"{self.item_data['label'].lower()}.png"
+        icon_name = f"{self.item_data.get('label', '').lower()}.png"
         icon_path = os.path.join(self.hub.icons_dir, icon_name)
         if os.path.exists(icon_path):
             pixmap = QPixmap(icon_path)
@@ -146,8 +146,14 @@ class DraggableToolButton(QFrame):
         menu = QMenu(self)
         menu.setStyleSheet(f"QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.hub.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; border-radius: 4px; padding: 5px; }} QMenu::item {{ padding: 8px 25px; border-radius: 4px; }} QMenu::item:selected {{ background-color: {self.hub.accent_color}; color: #000; }}")
         edit_action = menu.addAction("✏️ Editar")
+        swap_action = menu.addAction("🔄 Substituir")
+        
         action = menu.exec(self.mapToGlobal(pos))
-        if action == edit_action: self.hub.edit_button_dialog(self.item_data)
+        if action == edit_action: 
+            self.hub.edit_button_dialog(self.item_data)
+        elif action == swap_action:
+            if hasattr(self.hub, 'open_swap_dialog'):
+                self.hub.open_swap_dialog(self.item_data)
 
     def toggle_favorite(self):
         self.item_data["favorite"] = not self.item_data.get("favorite", False)
@@ -156,16 +162,9 @@ class DraggableToolButton(QFrame):
         self.hub.update_favorites_panel()
 
     def confirm_delete(self):
-        reply = QMessageBox.question(
-            self, 
-            "Confirmar Exclusão", 
-            f"Deseja apagar '{self.item_data.get('label', 'este item')}'?", 
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
+        reply = QMessageBox.question(self, "Confirmar Exclusão", f"Deseja apagar '{self.item_data.get('label', 'este item')}'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             self.hub.delete_button_by_data(self.item_data)
-            
             parent_window = self.window()
             if isinstance(parent_window, FolderPanelWidget):
                 parent_window.refresh_grid()
@@ -184,11 +183,29 @@ class DraggableToolButton(QFrame):
         self.__drag_occurred = True
         drag = QDrag(self)
         mime_data = QMimeData()
-        mime_data.setText(str(self.item_index))
+        mime_data.setText(str(self.item_index)) 
         drag.setMimeData(mime_data)
         drag.setPixmap(self.grab())
         drag.setHotSpot(event.pos())
         drag.exec(Qt.DropAction.MoveAction)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+            self.setStyleSheet(self.styleSheet() + "\nQFrame#Card { border: 2px solid #ffffff; background-color: rgba(255,255,255,0.2); }")
+
+    def dragLeaveEvent(self, event):
+        self.update_card_style() 
+
+    def dropEvent(self, event):
+        source_idx = int(event.mimeData().text())
+        target_idx = self.item_index
+        self.update_card_style() 
+        
+        if source_idx != target_idx:
+            if hasattr(self.hub, 'swap_items'):
+                self.hub.swap_items(source_idx, target_idx)
+            event.acceptProposedAction()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -201,7 +218,6 @@ class DraggableToolButton(QFrame):
                 panel.exec()
             else:
                 if isinstance(self.window(), QDialog): self.window().accept()
-                
                 url = self.item_data.get("url", "")
                 
                 if url.startswith("media://"):
@@ -210,42 +226,52 @@ class DraggableToolButton(QFrame):
                         player = MediaViewerDialog(self.hub, file_path)
                         player.exec()
                     else:
-                        QMessageBox.warning(self, "Erro", "Arquivo não encontrado no computador!")
+                        QMessageBox.warning(self, "Erro", "Arquivo não encontrado!")
+                
+                # --- LANÇADOR INSTANTÂNEO DE .EXE (Ctypes WScript.Shell) ---
+                elif url.lower().endswith(('.exe', '.bat', '.cmd', '.lnk')) or os.path.isfile(url):
+                    exe_path = os.path.normpath(url)
+                    exe_name = os.path.splitext(os.path.basename(exe_path))[0]
+                    
+                    ps_script = f"""
+                    $p = Get-Process '{exe_name}' -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if ($p) {{
+                        $wshell = New-Object -ComObject wscript.shell
+                        $wshell.AppActivate($p.Id)
+                    }} else {{
+                        Start-Process '{exe_path}'
+                    }}
+                    """
+                    subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script], creationflags=subprocess.CREATE_NO_WINDOW)
+                
                 elif url.startswith("remote://"):
                     try: launch_remote_tool(url.split("//")[1])
                     except: pass
                 else: 
                     self.hub.open_web_tab(url, self.item_data.get("label", ""))
 
-    # --- EVENTOS DE ANIMAÇÃO AO PASSAR O MOUSE ---
+    def update_lift(self, value):
+        self.internal_layout.setContentsMargins(6, 6 - int(value), 6, 12 + int(value))
+
     def enterEvent(self, event):
-        rect = self.geometry()
-        self.anim_geometry.setStartValue(rect)
-        # Sobe o botão em 5 pixels
-        self.anim_geometry.setEndValue(QRect(rect.x(), rect.y() - 5, rect.width(), rect.height()))
-        self.anim_geometry.start()
+        self.anim_lift.setStartValue(0)
+        self.anim_lift.setEndValue(4) 
+        self.anim_lift.start()
         
-        # Intensifica a sombra
         self.shadow.setBlurRadius(20)
         self.shadow.setOffset(0, 8)
         self.shadow.setColor(QColor(0, 0, 0, 150))
-        
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        rect = self.geometry()
-        self.anim_geometry.setStartValue(rect)
-        # Retorna o botão para a posição original
-        self.anim_geometry.setEndValue(QRect(rect.x(), rect.y() + 5, rect.width(), rect.height()))
-        self.anim_geometry.start()
+        self.anim_lift.setStartValue(4)
+        self.anim_lift.setEndValue(0)
+        self.anim_lift.start()
         
-        # Suaviza a sombra
         self.shadow.setBlurRadius(10)
         self.shadow.setOffset(0, 5)
         self.shadow.setColor(QColor(0, 0, 0, 80))
-        
         super().leaveEvent(event)
-
 
 class MediaViewerDialog(QDialog):
     def __init__(self, parent, file_path):
@@ -255,10 +281,7 @@ class MediaViewerDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
-        self.setStyleSheet("""
-            QDialog { background-color: rgba(17, 20, 26, 0.95); border: 2px solid #10b981; border-radius: 12px; }
-            QLabel { color: white; font-weight: bold; background: transparent; border: none; }
-        """)
+        self.setStyleSheet("QDialog { background-color: rgba(17, 20, 26, 0.95); border: 2px solid #10b981; border-radius: 12px; } QLabel { color: white; font-weight: bold; background: transparent; border: none; }")
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -278,14 +301,12 @@ class MediaViewerDialog(QDialog):
         layout.addLayout(header)
         
         ext = os.path.splitext(file_path)[1].lower()
-        
         if ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp']:
             self.img_label = QLabel()
             self.img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             pixmap = QPixmap(file_path)
             self.img_label.setPixmap(pixmap.scaled(750, 450, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
             layout.addWidget(self.img_label)
-            
         elif ext in ['.mp4', '.avi', '.mkv', '.mov']:
             self.video_widget = QVideoWidget()
             self.video_widget.setStyleSheet("border: 1px solid #333; background-color: #000;")
@@ -311,7 +332,6 @@ class MediaViewerDialog(QDialog):
             controls.addWidget(btn_play)
             controls.addWidget(btn_pause)
             layout.addLayout(controls)
-            
             self.media_player.play()
             
     def close_player(self):
@@ -319,180 +339,55 @@ class MediaViewerDialog(QDialog):
             self.media_player.stop()
         self.accept()
 
-
 class FolderCableFrame(QFrame):
-
     def __init__(self, parent_panel):
         super().__init__()
-
         self.panel = parent_panel
-
         self.dash_offset = 0
-
         self.anim_timer = QTimer(self)
-        self.anim_timer.timeout.connect(
-            self.update_animation
-        )
-
+        self.anim_timer.timeout.connect(self.update_animation)
         self.anim_timer.start(40)
-
-
-        self.setAttribute(
-            Qt.WidgetAttribute.WA_TranslucentBackground,
-            True
-        )
-
-        self.setStyleSheet(
-            f"""
-            FolderCableFrame {{
-                background-color: rgba(0,0,0,0.25);
-                border: 1px solid {self.panel.hub.accent_color};
-                border-radius: 10px;
-            }}
-            """
-        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet(f"FolderCableFrame {{ background-color: rgba(0,0,0,0.25); border: 1px solid {self.panel.hub.accent_color}; border-radius: 10px; }}")
 
     def update_animation(self):
-
         self.dash_offset -= 2
-
-        if self.dash_offset < -100:
-            self.dash_offset = 0
-
+        if self.dash_offset < -100: self.dash_offset = 0
         self.update()
 
     def paintEvent(self,event):
-
         super().paintEvent(event)
-
-
         painter = QPainter(self)
-
-        painter.setRenderHint(
-            QPainter.RenderHint.Antialiasing
-        )
-
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         cards = []
-
-        # PEGA TODOS OS BOTÕES/PÁSTAS CRIADOS
-        widgets = self.findChildren(
-            DraggableToolButton
-        )
-
+        widgets = self.findChildren(DraggableToolButton)
         for widget in widgets:
-
             if widget.isVisible():
-
-                pos = widget.mapTo(
-                    self,
-                    QPoint(
-                        widget.width()//2,
-                        widget.height()//2
-                    )
-                )
-
+                pos = widget.mapTo(self, QPoint(widget.width()//2, widget.height()//2))
                 cards.append(pos)
-
         if len(cards) < 2:
-
             painter.end()
             return
+        accent = QColor(self.panel.hub.accent_color)
+        shadow_pen = QPen(QColor(0,0,0,120), 14, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        cable_pen = QPen(QColor(5,5,5,230), 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        glow_pen = QPen(accent, 3, Qt.PenStyle.CustomDashLine, Qt.PenCapStyle.RoundCap)
+        glow_pen.setDashPattern([8, 16])
+        glow_pen.setDashOffset(self.dash_offset)
 
-        accent = QColor(
-            self.panel.hub.accent_color
-        )
-
-        shadow_pen = QPen(
-            QColor(0,0,0,120),
-            14,
-            Qt.PenStyle.SolidLine,
-            Qt.PenCapStyle.RoundCap
-        )
-
-        cable_pen = QPen(
-            QColor(5,5,5,230),
-            7,
-            Qt.PenStyle.SolidLine,
-            Qt.PenCapStyle.RoundCap
-        )
-
-        glow_pen = QPen(
-            accent,
-            3,
-            Qt.PenStyle.CustomDashLine,
-            Qt.PenCapStyle.RoundCap
-        )
-
-        glow_pen.setDashPattern(
-            [
-                8,
-                16
-            ]
-        )
-
-        glow_pen.setDashOffset(
-            self.dash_offset
-        )
-
-        # LIGA PRIMEIRO AO ÚLTIMO NA ORDEM
         for i in range(len(cards)-1):
-
-            p1 = QPointF(
-                cards[i]
-            )
-
-            p2 = QPointF(
-                cards[i+1]
-            )
-
+            p1 = QPointF(cards[i])
+            p2 = QPointF(cards[i+1])
             path = QPainterPath()
-
-            path.moveTo(
-                p1
-            )
-
+            path.moveTo(p1)
             curva = 60
-
-            path.cubicTo(
-
-                QPointF(
-                    p1.x(),
-                    p1.y()+curva
-                ),
-
-                QPointF(
-                    p2.x(),
-                    p2.y()+curva
-                ),
-
-                p2
-
-            )
-
-            painter.setPen(
-                shadow_pen
-            )
-
-            painter.drawPath(
-                path
-            )
-
-            painter.setPen(
-                cable_pen
-            )
-
-            painter.drawPath(
-                path
-            )
-
-            painter.setPen(
-                glow_pen
-            )
-
-            painter.drawPath(
-                path
-            )
-
+            path.cubicTo(QPointF(p1.x(), p1.y()+curva), QPointF(p2.x(), p2.y()+curva), p2)
+            painter.setPen(shadow_pen)
+            painter.drawPath(path)
+            painter.setPen(cable_pen)
+            painter.drawPath(path)
+            painter.setPen(glow_pen)
+            painter.drawPath(path)
         painter.end()
 
 class FolderPanelWidget(QDialog):
@@ -505,15 +400,11 @@ class FolderPanelWidget(QDialog):
         self.search_filter = "" 
         
         self.setFixedSize(944,760)
-        
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAcceptDrops(True)
         
-        self.setStyleSheet(f"""
-            QDialog {{ background-color: rgba(17, 20, 26, 0.85); border: 2px solid {folder_data.get('color', self.hub.accent_color)}; border-radius: 12px; }}
-            QLabel {{ background: transparent; border: none; }}
-        """)
+        self.setStyleSheet(f"QDialog {{ background-color: rgba(17, 20, 26, 0.85); border: 2px solid {folder_data.get('color', self.hub.accent_color)}; border-radius: 12px; }} QLabel {{ background: transparent; border: none; }}")
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 10, 20, 25)
@@ -531,19 +422,13 @@ class FolderPanelWidget(QDialog):
         
         folder_label = self.folder_data.get("label", "Desconhecida")
         self.search_bar.setPlaceholderText(f"Digite aqui para pesquisar... [Pasta: {folder_label}]")
-        
         self.search_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.search_bar.setStyleSheet(f"""
-            QLineEdit {{ background: rgba(0, 0, 0, 0.6); border: 1px solid {self.hub.accent_color}; color: #fff; font-size: 16px; font-weight: bold; border-radius: 6px; padding: 8px; }}
-            QLineEdit:focus {{ background: rgba(0, 0, 0, 0.8); border: 2px solid #ffffff; }}
-        """)
+        self.search_bar.setStyleSheet(f"QLineEdit {{ background: rgba(0, 0, 0, 0.6); border: 1px solid {self.hub.accent_color}; color: #fff; font-size: 16px; font-weight: bold; border-radius: 6px; padding: 8px; }} QLineEdit:focus {{ background: rgba(0, 0, 0, 0.8); border: 2px solid #ffffff; }}")
         self.search_bar.textChanged.connect(self.filter_items)
         header_layout.addWidget(self.search_bar)
         layout.addWidget(self.header_frame)
         
         self.grid_frame = FolderCableFrame(self)
-
-        # espaço suficiente para os cards + cabo sem esmagar a navegação
         self.grid_frame.setFixedHeight(330)
         self.grid_layout = QGridLayout(self.grid_frame)
         self.grid_layout.setSpacing(8)
@@ -565,10 +450,7 @@ class FolderPanelWidget(QDialog):
         
         for btn in [self.btn_prev, self.btn_next]:
             btn.setFixedSize(60, 40)
-            btn.setStyleSheet(f"""
-                QPushButton {{ background-color: {self.hub.accent_color}; color: #000; font-weight: bold; font-size: 18px; border-radius: 6px; }}
-                QPushButton:hover {{ background-color: #ffffff; }}
-            """)
+            btn.setStyleSheet(f"QPushButton {{ background-color: {self.hub.accent_color}; color: #000; font-weight: bold; font-size: 18px; border-radius: 6px; }} QPushButton:hover {{ background-color: #ffffff; }}")
             
         self.btn_prev.clicked.connect(lambda: self.change_page(-1))
         self.btn_next.clicked.connect(lambda: self.change_page(1))
@@ -578,12 +460,6 @@ class FolderPanelWidget(QDialog):
         nav_layout.addWidget(self.btn_next)
         layout.addWidget(self.nav_frame)
         
-        layout.setStretch(0, 0)
-        layout.setStretch(1, 1)
-        layout.setStretch(2, 0)
-        layout.setStretch(3, 0)
-        layout.setStretch(4, 0)
-        
         self.shortcut_left = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
         self.shortcut_left.activated.connect(lambda: self.change_page(-1))
         self.shortcut_right = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
@@ -591,10 +467,7 @@ class FolderPanelWidget(QDialog):
         
         btn_add = QPushButton("➕ Adicionar Botão nesta Pasta")
         btn_add.setMinimumHeight(45)
-        btn_add.setStyleSheet(f"""
-            QPushButton {{ background-color: {self.hub.accent_color}; color: #000; font-weight: bold; border-radius: 6px; }}
-            QPushButton:hover {{ background-color: #ffffff; }}
-        """)
+        btn_add.setStyleSheet(f"QPushButton {{ background-color: {self.hub.accent_color}; color: #000; font-weight: bold; border-radius: 6px; }} QPushButton:hover {{ background-color: #ffffff; }}")
         btn_add.clicked.connect(self.add_button_to_folder)
         layout.addWidget(btn_add, 0)
         
@@ -605,15 +478,11 @@ class FolderPanelWidget(QDialog):
         layout.addWidget(btn_back, 0)
         
         self.refresh_grid()
-        
-        # FIX: Força a janela a ter o foco ao abrir, impedindo a barra de pesquisa de apagar o texto de Placeholder.
         self.setFocus()
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.accept()
-        else:
-            event.ignore()
+        if event.mimeData().hasUrls(): event.accept()
+        else: event.ignore()
 
     def dropEvent(self, event):
         files = [u.toLocalFile() for u in event.mimeData().urls()]
@@ -624,15 +493,8 @@ class FolderPanelWidget(QDialog):
                 ext = os.path.splitext(file_path)[1].lower()
                 if ext in ['.png', '.jpg', '.jpeg', '.mp4', '.mkv', '.avi', '.mov', '.gif']:
                     name = os.path.basename(file_path)
-                    if "buttons" not in self.folder_data: 
-                        self.folder_data["buttons"] = []
-                    
-                    new_btn = {
-                        "label": name[:12] + "..." if len(name) > 12 else name, 
-                        "subtitle": "Mídia Local",
-                        "url": f"media://{file_path}", 
-                        "image_path": file_path if ext in ['.png', '.jpg', '.jpeg'] else ""
-                    }
+                    if "buttons" not in self.folder_data: self.folder_data["buttons"] = []
+                    new_btn = {"label": name[:12] + "..." if len(name) > 12 else name, "subtitle": "Mídia Local", "url": f"media://{file_path}", "image_path": file_path if ext in ['.png', '.jpg', '.jpeg'] else ""}
                     self.folder_data["buttons"].append(new_btn)
                     added = True
         
@@ -644,29 +506,21 @@ class FolderPanelWidget(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        
         screen = QApplication.primaryScreen().availableGeometry()
         x = screen.x() + (screen.width() - self.width()) // 2
         y = screen.y() + (screen.height() - self.height()) // 2
-        
-        # SOBE UM POUCO PARA NÃO CORTAR EMBAIXO
-        y -= 50
-        
-        self.move(x, y)
+        self.move(x, y - 50)
 
     def update_header_visuals(self):
         bg_img = self.folder_data.get("header_bg", "")
         base_style = f"border: 2px solid {self.hub.accent_color}; border-radius: 8px; background-color: rgba(0, 0, 0, 0.4);"
         hover_style = "border-color: #ffffff; background-color: rgba(0, 0, 0, 0.6);"
-        
         if bg_img and os.path.exists(bg_img):
             base_style += f" background-image: url('{bg_img.replace(chr(92), '/')}'); background-position: center; background-size: cover; background-repeat: no-repeat;"
-            
         self.header_frame.setStyleSheet(f"#HeaderFrame {{ {base_style} }} #HeaderFrame:hover {{ {hover_style} }}")
 
     def change_header_image(self, event):
         if self.search_bar.geometry().contains(event.pos()): return
-        
         path, _ = QFileDialog.getOpenFileName(self, "Imagem de Fundo do Cabeçalho", "", "Images (*.png *.jpg *.jpeg)")
         if path:
             name = self.folder_data.get("label", "folder").lower()
@@ -687,7 +541,6 @@ class FolderPanelWidget(QDialog):
             if child.widget(): child.widget().deleteLater()
             
         all_items = self.folder_data.get("buttons", [])
-        
         if self.search_filter:
             all_items = [b for b in all_items if self.search_filter in b.get("label", "").lower()]
             
@@ -703,16 +556,13 @@ class FolderPanelWidget(QDialog):
 
     def change_page(self, delta):
         all_items = self.folder_data.get("buttons", [])
-        if self.search_filter:
-            all_items = [b for b in all_items if self.search_filter in b.get("label", "").lower()]
-            
+        if self.search_filter: all_items = [b for b in all_items if self.search_filter in b.get("label", "").lower()]
         max_p = max(0, (len(all_items) - 1) // self.items_per_page) if all_items else 0
         self.current_page = max(0, min(self.current_page + delta, max_p))
         self.refresh_grid()
 
     def add_button_to_folder(self):
-        if "buttons" not in self.folder_data:
-            self.folder_data["buttons"] = []
+        if "buttons" not in self.folder_data: self.folder_data["buttons"] = []
         self.folder_data["buttons"].append({"label": "Novo Item", "url": "https://google.com"})
         self.hub.save_settings(force=True)
         self.current_page = (len(self.folder_data["buttons"]) - 1) // self.items_per_page
@@ -872,7 +722,6 @@ class LockScreenWidget(QWidget):
             self.lbl_error.setText("Chave Mestra Inválida!")
             self.input_key.clear()
 
-# --- MENU SUSPENSO E APLICAÇÃO INSTANTÂNEA DE TEMA ---
 class ThemeSelectorButton(QPushButton):
     def __init__(self, hub, parent=None):
         super().__init__(parent)
@@ -891,9 +740,8 @@ class ThemeSelectorButton(QPushButton):
         icon_path = os.path.join(self.hub.icons_dir, current_icon)
         
         if os.path.exists(icon_path):
-            # Define o ícone nativamente em vez de usar background-image
             self.setIcon(QIcon(icon_path))
-            self.setIconSize(QSize(22, 22)) # Tamanho ideal para um botão de 40x40
+            self.setIconSize(QSize(22, 22)) 
             
             self.setStyleSheet(f"""
                 QPushButton {{
@@ -907,7 +755,6 @@ class ThemeSelectorButton(QPushButton):
                 }}
             """)
         else:
-            # Fallback seguro
             self.setIcon(QIcon())
             self.setStyleSheet(f"QPushButton {{ background-color: {self.hub.accent_color}; border: 2px solid #fff; border-radius: 20px; }}")
 
@@ -919,7 +766,6 @@ class ThemeSelectorButton(QPushButton):
             QMenu::item:selected {{ background-color: {self.hub.accent_color}; color: #000; }}
         """)
 
-        # Nomes EXATOS conforme sua lista no print
         themes = {
             "Tema Azul": ("Custom Blue.ico", "#2196F3"),
             "Tema Verde": ("Custom Green.ico", "#4CAF50"),
@@ -957,12 +803,9 @@ class ThemeSelectorButton(QPushButton):
         
         self.update_visual()
         
-        # Chama a função de estilo para aplicar tudo
         if hasattr(self.hub, 'apply_styles'):
             self.hub.apply_styles()
             
-        # Força atualização visual dos botões principais manualmente aqui também
-        # para garantir que o CSS "vença" qualquer sobreposição
         if hasattr(self.hub, 'btn_ops_home'):
             c_accent = QColor(new_color)
             btn_text_color = "#07080a" if c_accent.lightness() > 140 else "#ffffff"
