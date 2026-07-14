@@ -1206,14 +1206,25 @@ class StandaloneHub(QMainWindow):
             self.save_settings(force=True)
 
     def update_tab_title(self, browser, title):
-        """Método simples chamado pela própria aba quando ela troca de nome"""
         index = self.tabs.indexOf(browser)
         if index != -1:
             title = "Navegação" if not title.strip() else title
             browser.setProperty("original_label", title)
-            self.tabs.setTabText(index, f"📌 {title[:18]}..." if browser.property("is_pinned") else title[:20])
+            # Verifica se tem som antes de atualizar o título
+            has_audio = browser.page().recentlyAudible()
+            audio_icon = "🔊 " if has_audio else ""
+            
+            self.tabs.setTabText(index, f"{audio_icon}📌 {title[:18]}..." if browser.property("is_pinned") else f"{audio_icon}{title[:20]}")
             if getattr(self, 'save_tabs_enabled', False) and not getattr(self, 'is_restoring', False): 
                 self.save_settings(force=True)
+
+    # Atualiza a aba instantaneamente quando o áudio começa/para
+    def update_tab_audio_indicator(self, browser, audible):
+        index = self.tabs.indexOf(browser)
+        if index != -1:
+            title = browser.property("original_label") or "Navegação"
+            audio_icon = "🔊 " if audible else ""
+            self.tabs.setTabText(index, f"{audio_icon}📌 {title[:18]}..." if browser.property("is_pinned") else f"{audio_icon}{title[:20]}")
 
     def sync_all_whatsapp_themes(self):
         """Apenas manda as abas atualizarem seus próprios temas"""

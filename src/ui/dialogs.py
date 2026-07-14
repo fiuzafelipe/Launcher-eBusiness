@@ -828,10 +828,10 @@ class CommandPaletteDialog(QDialog):
         btn_sync.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_sync.clicked.connect(self.action_sync)
         
-        btn_menu = QPushButton("⋮")
-        btn_menu.setFixedSize(28, 28)
-        btn_menu.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_menu.clicked.connect(self.action_menu)
+        self.btn_menu = QPushButton("⋮")
+        self.btn_menu.setFixedSize(28, 28)
+        self.btn_menu.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_menu.clicked.connect(self.action_menu)
         
         sep2 = QFrame()
         sep2.setObjectName("separator")
@@ -846,7 +846,7 @@ class CommandPaletteDialog(QDialog):
         ct_layout.addWidget(sep1)
         ct_layout.addWidget(btn_music)
         ct_layout.addWidget(btn_sync)
-        ct_layout.addWidget(btn_menu)
+        ct_layout.addWidget(self.btn_menu)
         ct_layout.addWidget(sep2)
         ct_layout.addWidget(btn_close)
         
@@ -944,20 +944,64 @@ class CommandPaletteDialog(QDialog):
     # AÇÕES DOS BOTÕES (Cabeçalho)
     # =================================================================
     def action_extensions(self):
-        from PyQt6.QtWidgets import QMessageBox
-        QMessageBox.information(self, "Extensões", "Central de Extensões em desenvolvimento.\nAqui você gerenciará plugins e add-ons.")
+        dialog = ExtensionsDialog(self.hub, self)
+        dialog.exec()
 
     def action_music(self):
-        from PyQt6.QtWidgets import QMessageBox
-        QMessageBox.information(self, "Controle de Mídia", "Módulo de música e controle de reprodução web em breve.")
+        dialog = MediaControlDialog(self.hub, self)
+        dialog.exec()
 
     def action_sync(self):
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.information(self, "Sincronização", "O sistema de Sincronização em Nuvem de usuários será implementado aqui.")
 
     def action_menu(self):
-        from PyQt6.QtWidgets import QMessageBox
-        QMessageBox.information(self, "Opções", "Mais configurações da Command Palette serão disponibilizadas aqui.")
+        from PyQt6.QtWidgets import QMenu, QMessageBox
+        
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: rgba(17, 20, 26, 0.98);
+                color: #fff;
+                border: 1px solid {self.hub.accent_color};
+                border-radius: 6px;
+                padding: 4px;
+                font-family: 'Segoe UI';
+                font-size: 13px;
+                font-weight: bold;
+            }}
+            QMenu::item {{
+                padding: 8px 25px 8px 15px;
+                border-radius: 4px;
+                margin: 2px;
+            }}
+            QMenu::item:selected {{
+                background-color: {self.hub.accent_color};
+                color: #000;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background-color: rgba(255, 255, 255, 0.1);
+                margin: 4px 10px;
+            }}
+        """)
+
+        action_settings = menu.addAction("⚙️ Configurações do Painel")
+        action_shortcuts = menu.addAction("⌨️ Atalhos do Sistema")
+        menu.addSeparator()
+        action_clear = menu.addAction("🧹 Limpar Caixa de Busca")
+
+        # Abre o menu exatamente embaixo do botão
+        pos = self.btn_menu.mapToGlobal(self.btn_menu.rect().bottomLeft())
+        selected = menu.exec(pos)
+
+        if selected == action_settings:
+            QMessageBox.information(self, "Configurações", "Módulo de configurações do painel será aberto aqui.")
+        elif selected == action_shortcuts:
+            QMessageBox.information(self, "Atalhos", "Módulo com a lista de atalhos do sistema será aberto aqui.")
+        elif selected == action_clear:
+            self.search_bar.clear()
+            self.google_input.clear()
         
     # =================================================================
     # ARRASTAR A JANELA (Drag & Drop)
@@ -1057,3 +1101,243 @@ class CommandPaletteDialog(QDialog):
             y = hub_rect.y() + (hub_rect.height() - self.height()) // 2
             self.move(x, y) 
         super().showEvent(event)
+
+# =========================================================================================
+# MÓDULOS DO PAINEL INTELIGENTE (Música e Extensões)
+# =========================================================================================
+
+class MediaControlDialog(QDialog):
+    def __init__(self, parent_hub, parent_palette):
+        super().__init__(parent_palette)
+        self.hub = parent_hub
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Popup)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(320, 140)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        bg = QWidget()
+        accent = self.hub.accent_color
+        bg.setStyleSheet(f"""
+            QWidget {{ background-color: rgba(17, 20, 26, 0.98); border: 2px solid {accent}; border-radius: 12px; }}
+            QLabel {{ border: none; background: transparent; color: white; font-family: 'Segoe UI'; }}
+            QPushButton {{ background: transparent; border: none; font-size: 20px; color: #fff; border-radius: 20px; }}
+            QPushButton:hover {{ background-color: rgba(255, 255, 255, 0.1); color: {accent}; }}
+        """)
+        
+        from PyQt6.QtWidgets import QGraphicsDropShadowEffect
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(25)
+        shadow.setColor(QColor(0, 0, 0, 180))
+        shadow.setOffset(0, 8)
+        bg.setGraphicsEffect(shadow)
+        
+        inner_layout = QVBoxLayout(bg)
+        inner_layout.setContentsMargins(15, 15, 15, 15)
+        
+        lbl_status = QLabel("🎵 Tocando Agora")
+        lbl_status.setStyleSheet(f"color: {accent}; font-weight: bold; font-size: 12px;")
+        lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        lbl_track = QLabel("Nenhuma mídia em reprodução")
+        lbl_track.setStyleSheet("font-size: 14px; font-weight: 600;")
+        lbl_track.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        controls_layout = QHBoxLayout()
+        btn_prev = QPushButton("⏮")
+        btn_play = QPushButton("⏯")
+        btn_next = QPushButton("⏭")
+        
+        btn_prev.setFixedSize(40, 40)
+        btn_play.setFixedSize(45, 45)
+        btn_play.setStyleSheet(f"QPushButton {{ background-color: {accent}; color: #000; font-size: 24px; border-radius: 22px; }} QPushButton:hover {{ background-color: #fff; }}")
+        btn_next.setFixedSize(40, 40)
+        
+        controls_layout.addStretch()
+        controls_layout.addWidget(btn_prev)
+        controls_layout.addWidget(btn_play)
+        controls_layout.addWidget(btn_next)
+        controls_layout.addStretch()
+        
+        inner_layout.addWidget(lbl_status)
+        inner_layout.addWidget(lbl_track)
+        inner_layout.addLayout(controls_layout)
+        
+        layout.addWidget(bg)
+
+    def showEvent(self, event):
+        parent_rect = self.parent().geometry()
+        # Posiciona no canto superior direito do painel, logo abaixo dos botões
+        x = parent_rect.x() + parent_rect.width() - self.width() - 25
+        y = parent_rect.y() + 70
+        self.move(x, y)
+        super().showEvent(event)
+
+
+class ExtensionsDialog(QDialog):
+    def __init__(self, parent_hub, parent_palette):
+        super().__init__(parent_palette)
+        self.hub = parent_hub
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Popup)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(300, 250)
+        self.setup_ui()
+
+    def setup_ui(self):
+        from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QGraphicsDropShadowEffect
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        bg = QWidget()
+        accent = self.hub.accent_color
+        bg.setStyleSheet(f"""
+            QWidget {{ background-color: rgba(17, 20, 26, 0.98); border: 2px solid {accent}; border-radius: 12px; }}
+            QLabel {{ border: none; background: transparent; color: {accent}; font-family: 'Segoe UI'; font-weight: bold; font-size: 14px; padding-bottom: 5px; border-bottom: 1px solid rgba(255,255,255,0.1); }}
+            QListWidget {{ background: transparent; border: none; outline: none; }}
+            QListWidget::item {{ color: white; padding: 10px; border-radius: 6px; font-family: 'Segoe UI'; font-size: 13px; font-weight: 600; margin-bottom: 3px; }}
+            QListWidget::item:hover {{ background-color: rgba(255, 255, 255, 0.1); }}
+        """)
+        
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(25)
+        shadow.setColor(QColor(0, 0, 0, 180))
+        shadow.setOffset(0, 8)
+        bg.setGraphicsEffect(shadow)
+        
+        inner_layout = QVBoxLayout(bg)
+        inner_layout.setContentsMargins(15, 15, 15, 15)
+        
+        lbl_title = QLabel("🧩 Extensões Globais")
+        inner_layout.addWidget(lbl_title)
+        
+        self.ext_list = QListWidget()
+        self.ext_list.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # O Hub lembrará quais estão ligadas olhando para os scripts ativos
+        self.active_scripts = [s.name() for s in self.hub.profile.scripts().toList()]
+        
+        adblock_icon = "🟢" if "fiuza-adblock" in self.active_scripts else "🔴"
+        dark_icon = "🟢" if "fiuza-dark-mode" in self.active_scripts else "🔴"
+        
+        self.exts = {
+            "AdBlocker Global": {"icon": adblock_icon, "func": self.toggle_adblock},
+            "Dark Mode Universal": {"icon": dark_icon, "func": self.toggle_darkmode},
+            "Picture-in-Picture (PiP)": {"icon": "▶", "func": self.trigger_pip}
+        }
+        
+        for ext_name, data in self.exts.items():
+            item = QListWidgetItem(f"{data['icon']}  {ext_name}")
+            self.ext_list.addItem(item)
+            
+        self.ext_list.itemClicked.connect(self.handle_extension_click)
+        inner_layout.addWidget(self.ext_list)
+        layout.addWidget(bg)
+
+    def showEvent(self, event):
+        parent_rect = self.parent().geometry()
+        x = parent_rect.x() + parent_rect.width() - self.width() - 25
+        y = parent_rect.y() + 70
+        self.move(x, y)
+        super().showEvent(event)
+
+    def get_current_browser(self):
+        idx = self.hub.tabs.currentIndex()
+        if idx > 0:
+            return self.hub.tabs.widget(idx)
+        return None
+
+    def handle_extension_click(self, item):
+        from PyQt6.QtWidgets import QMessageBox
+        browser = self.get_current_browser()
+        
+        text = item.text()
+        ext_name = text.split("  ")[1]
+        
+        if ext_name == "Picture-in-Picture (PiP)":
+            if not browser:
+                QMessageBox.information(self, "Aviso", "Abra um vídeo primeiro para usar o PiP.")
+                return
+            self.trigger_pip(browser)
+            self.accept()
+            return
+            
+        is_active = "🟢" in text
+        new_icon = "🔴" if is_active else "🟢"
+        item.setText(f"{new_icon}  {ext_name}")
+        
+        func = self.exts[ext_name]["func"]
+        func(not is_active)
+
+    # =========================================================
+    # INJETOR DE SCRIPT GLOBAL (Persistência)
+    # =========================================================
+    def inject_global_script(self, script_id, js_code, enable):
+        from PyQt6.QtWebEngineCore import QWebEngineScript
+        profile = self.hub.profile
+        scripts = profile.scripts()
+        
+        # Correção PyQt6: Transforma a coleção em lista e remove pelo nome
+        for s in scripts.toList():
+            if s.name() == script_id:
+                scripts.remove(s)
+            
+        if enable:
+            script = QWebEngineScript()
+            script.setName(script_id)
+            script.setSourceCode(js_code)
+            script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentReady)
+            script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+            script.setRunsOnSubFrames(True)
+            scripts.insert(script)
+            
+        # Aplica/Remove instantaneamente em todas as abas abertas
+        for i in range(1, self.hub.tabs.count()):
+            widget = self.hub.tabs.widget(i)
+            if enable:
+                widget.page().runJavaScript(js_code)
+            else:
+                removal = f"var el = document.getElementById('{script_id}'); if(el) el.remove();"
+                widget.page().runJavaScript(removal)
+
+    def toggle_darkmode(self, enable):
+        js_code = """
+            if (!document.getElementById('fiuza-dark-mode')) {
+                var style = document.createElement('style');
+                style.id = 'fiuza-dark-mode';
+                style.innerHTML = 'html { filter: invert(1) hue-rotate(180deg) !important; } img, video, iframe, canvas { filter: invert(1) hue-rotate(180deg) !important; }';
+                document.head.appendChild(style);
+            }
+        """
+        self.inject_global_script('fiuza-dark-mode', js_code, enable)
+
+    def toggle_adblock(self, enable):
+        js_code = """
+            if (!document.getElementById('fiuza-adblock')) {
+                var style = document.createElement('style');
+                style.id = 'fiuza-adblock';
+                style.innerHTML = '.ad, .ads, .advert, .banner, .ad-container, iframe[src*="ads"], [id*="google_ads"], .ytp-ad-module { display: none !important; }';
+                document.head.appendChild(style);
+            }
+        """
+        self.inject_global_script('fiuza-adblock', js_code, enable)
+
+    def trigger_pip(self, browser):
+        # Procura especificamente o vídeo que está em estado de reprodução
+        script = """
+            var vids = document.querySelectorAll('video');
+            var v = Array.from(vids).find(vid => !vid.paused) || vids[0];
+            if (v) {
+                if (document.pictureInPictureElement) {
+                    document.exitPictureInPicture();
+                } else {
+                    v.requestPictureInPicture().catch(e => alert("Erro ao abrir PiP: Inicie o vídeo primeiro."));
+                }
+            } else {
+                alert("Nenhum vídeo reproduzindo encontrado na página.");
+            }
+        """
+        browser.page().runJavaScript(script)
