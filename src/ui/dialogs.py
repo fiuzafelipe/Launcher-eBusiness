@@ -526,7 +526,6 @@ class ToolboxDialog(QDialog):
         self.input_sub = QLineEdit()
         self.input_url = QLineEdit()
         
-        # NOVO: Suporte a Executáveis
         self.check_exe = QCheckBox("Este botão abre um programa (.exe)?")
         self.check_exe.stateChanged.connect(self.toggle_exe_mode)
         
@@ -539,12 +538,18 @@ class ToolboxDialog(QDialog):
         self.selected_img = ""
         self.btn_img.clicked.connect(self.pick_img)
         
+        # --- NOVA CHECKBOX: TRANSPARÊNCIA ---
+        self.check_transparent = QCheckBox("Tornar fundo da imagem transparente")
+        self.check_transparent.setStyleSheet("color: #fff; font-size: 11px;")
+        self.check_transparent.setChecked(False) # Padrão
+        
         form_layout.addRow(QLabel("Nome do Botão:"), self.input_name)
         form_layout.addRow(QLabel("Subtítulo:"), self.input_sub)
         form_layout.addRow(self.check_exe)
         form_layout.addRow(QLabel("Destino:"), self.input_url)
-        form_layout.addRow("", self.btn_search_exe) # Espaço para alinhar com o input
+        form_layout.addRow("", self.btn_search_exe) 
         form_layout.addRow(self.btn_img)
+        form_layout.addRow("", self.check_transparent)
         
         btn_box = QHBoxLayout()
         btn_save = QPushButton("Adicionar")
@@ -568,8 +573,7 @@ class ToolboxDialog(QDialog):
 
     def pick_exe(self):
         path, _ = QFileDialog.getOpenFileName(self, "Selecionar Programa", "C:\\", "Executáveis (*.exe *.bat *.cmd *.lnk)")
-        if path:
-            self.input_url.setText(path)
+        if path: self.input_url.setText(path)
 
     def pick_img(self):
         path, _ = QFileDialog.getOpenFileName(self, "Selecionar Ícone", "", "Images (*.png *.jpg *.jpeg)")
@@ -585,9 +589,15 @@ class ToolboxDialog(QDialog):
         if name and url:
             if self.selected_img:
                 dest_path = os.path.join(self.parent_hub.icons_dir, f"{name.lower()}.png")
-                process_and_save_icon(self.selected_img, dest_path)
+                process_and_save_icon(self.selected_img, dest_path, transparent=self.check_transparent.isChecked())
                 
-            self.parent_hub.buttons_list.append({"label": name, "subtitle": sub, "url": url, "favorite": False})
+            self.parent_hub.buttons_list.append({
+                "label": name, 
+                "subtitle": sub, 
+                "url": url, 
+                "favorite": False,
+                "transparent_icon": self.check_transparent.isChecked()
+            })
             self.parent_hub.save_settings(force=True)
             self.parent_hub.filter_buttons_by_search(self.parent_hub.search_filter)
             self.accept()
@@ -624,7 +634,6 @@ class EditButtonDialog(QDialog):
         self.btn_search_exe.setVisible(False)
         self.btn_search_exe.clicked.connect(self.pick_exe)
         
-        # Verifica se já é um .exe para ativar o checkbox
         if self.input_url.text().lower().endswith(('.exe', '.bat', '.cmd', '.lnk')):
             self.check_exe.setChecked(True)
         
@@ -633,12 +642,18 @@ class EditButtonDialog(QDialog):
         self.selected_img = ""
         self.btn_img.clicked.connect(self.pick_img)
         
+        # --- NOVA CHECKBOX: TRANSPARÊNCIA NA EDIÇÃO ---
+        self.check_transparent = QCheckBox("Tornar fundo da imagem transparente")
+        self.check_transparent.setStyleSheet("color: #fff; font-size: 11px;")
+        self.check_transparent.setChecked(item_data.get("transparent_icon", False))
+        
         form_layout.addRow(QLabel("Nome do Botão:"), self.input_name)
         form_layout.addRow(QLabel("Nome do Subtítulo:"), self.input_subtitle)
         form_layout.addRow(self.check_exe)
         form_layout.addRow(QLabel("Destino:"), self.input_url)
         form_layout.addRow("", self.btn_search_exe)
         form_layout.addRow(self.btn_img)
+        form_layout.addRow("", self.check_transparent)
         
         btn_box = QHBoxLayout()
         btn_save = QPushButton("Salvar")
@@ -657,8 +672,7 @@ class EditButtonDialog(QDialog):
 
     def pick_exe(self):
         path, _ = QFileDialog.getOpenFileName(self, "Selecionar Programa", "C:\\", "Executáveis (*.exe *.bat *.cmd *.lnk)")
-        if path:
-            self.input_url.setText(path)
+        if path: self.input_url.setText(path)
 
     def pick_img(self):
         path, _ = QFileDialog.getOpenFileName(self, "Selecionar Ícone", "", "Images (*.png *.jpg *.jpeg)")
@@ -672,9 +686,11 @@ class EditButtonDialog(QDialog):
         new_sub = self.input_subtitle.text().strip()
         new_url = self.input_url.text().strip()
         if new_name and new_url:
+            self.item_data["transparent_icon"] = self.check_transparent.isChecked()
+            
             if self.selected_img:
                 dest_path = os.path.join(self.parent_hub.icons_dir, f"{new_name.lower()}.png")
-                process_and_save_icon(self.selected_img, dest_path)
+                process_and_save_icon(self.selected_img, dest_path, transparent=self.check_transparent.isChecked())
                 if self.old_name.lower() != new_name.lower():
                     old_icon = os.path.join(self.parent_hub.icons_dir, f"{self.old_name.lower()}.png")
                     if os.path.exists(old_icon):
