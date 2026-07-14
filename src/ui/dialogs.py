@@ -1498,10 +1498,17 @@ class SwapButtonDialog(QDialog):
         if idx >= 0 and self.item_mapping:
             target_item = self.item_mapping[idx]
             
+            # Junção mestre para escanear a localização por ID de memória
             all_items = self.hub.buttons_list + getattr(self.hub, 'folders_list', [])
-            idx1 = all_items.index(self.current_item)
-            idx2 = all_items.index(target_item)
-            
-            if hasattr(self.hub, 'swap_items'):
-                self.hub.swap_items(idx1, idx2)
+            idx1 = -1
+            idx2 = -1
+            for i, obj in enumerate(all_items):
+                if id(obj) == id(self.current_item):
+                    idx1 = i
+                if id(obj) == id(target_item):
+                    idx2 = i
+                    
+            if idx1 != -1 and idx2 != -1:
+                if hasattr(self.hub, 'swap_items'):
+                    self.hub.swap_items(idx1, idx2)
         self.accept()

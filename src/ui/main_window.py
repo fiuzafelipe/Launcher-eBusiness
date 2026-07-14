@@ -30,9 +30,6 @@ from PyQt6.QtGui import QColor, QImage, QShortcut, QKeySequence, QCursor, QPaint
 
 current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# =========================================================================================
-# BOTÃO ANIMADO (Logo Central Premium)
-# =========================================================================================
 class AnimatedLogoButton(QPushButton):
     def __init__(self, image_path, parent_hub=None):
         super().__init__(parent_hub)
@@ -107,12 +104,10 @@ class AnimatedLogoButton(QPushButton):
         y = -self.pixmap.height() / 2
         painter.drawPixmap(int(x), int(y), self.pixmap)
 
-
 class HomePanelAdapter(QWidget):
     def __init__(self, hub):
         super().__init__()
         self.hub = hub
-
 
 class StandaloneHub(QMainWindow):
     def __init__(self):
@@ -133,7 +128,6 @@ class StandaloneHub(QMainWindow):
         self.presets = {"Padrão (preto/branco)": {"theme": "#242120", "accent": "#d9d9d9"}, "Verde": {"theme": "#0f2419", "accent": "#12d97c"}, "Vermelho": {"theme": "#270d0d", "accent": "#d91e10"}, "Azul Claro": {"theme": "#0d2721", "accent": "#0dd9a6"}, "Azul Escuro": {"theme": "#0d0d27", "accent": "#0d0dd9"}, "Laranja": {"theme": "#271a0c", "accent": "#d9790c"}, "Amarelo": {"theme": "#27270c", "accent": "#d9d9d9"}, "Roxo Claro": {"theme": "#270d27", "accent": "#d90ccf"}, "Rosa": {"theme": "#270d14", "accent": "#d90c3c"}, "Branco": {"theme": "#d6dcd1", "accent": "#ffffff"}}
         self.current_page, self.items_per_page, self.is_restoring, self.search_filter, self.is_wp_light = 0, 8, False, "", False
         
-        # OBRIGATÓRIO: Carrega configurações antes de gerar UI
         self.load_settings()
         
         try:
@@ -141,7 +135,7 @@ class StandaloneHub(QMainWindow):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception as e:
-            print("[ICON ERROR]", e)
+            pass
         
         self.central_widget = QWidget()
         self.central_widget.setObjectName("CentralWidget")
@@ -226,7 +220,6 @@ class StandaloneHub(QMainWindow):
         
         self.main_layout.addWidget(self.bottom_bar_widget)
         
-        # Constrói UI principal
         self.create_home_tab()
         self.apply_styles()
         
@@ -257,16 +250,15 @@ class StandaloneHub(QMainWindow):
             self.show_lock_screen()
 
     # =========================================================================================
-    # FUNÇÕES PRINCIPAIS DE NAVEGAÇÃO E SISTEMA
+    # FUNÇÕES PRINCIPAIS DE NAVEGAÇÃO E SISTEMA (BLOCO RESTAURADO)
     # =========================================================================================
     def force_clean_session(self):
         try:
             self.profile.cookieStore().deleteAllCookies()
             self.profile.clearHttpCache()
             self.profile.clearAllVisitedLinks()
-            print("[SESSION] Cookies removidos")
         except Exception as e:
-            print("[SESSION CLEAN ERROR]", e)
+            pass
 
     def logout_google(self):
         try:
@@ -278,7 +270,7 @@ class StandaloneHub(QMainWindow):
             QTimer.singleShot(5000, self.reload_browser_session)
             QMessageBox.information(self, "Logout Google", "Conta Google desconectada.")
         except Exception as e:
-            print("[LOGOUT ERROR]", e)
+            pass
 
     def reload_browser_session(self):
         try:
@@ -287,7 +279,7 @@ class StandaloneHub(QMainWindow):
                 if isinstance(widget, QWebEngineView):
                     widget.reload()
         except Exception as e:
-            print("[RELOGIN ERROR]", e)
+            pass
 
     def clear_google_storage(self):
         reply = QMessageBox.question(self, "Limpar sessão Google", "Isso removerá todos os logins salvos do navegador.\n\nDeseja continuar?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
@@ -392,7 +384,7 @@ class StandaloneHub(QMainWindow):
         self.fav_search_bar.setVisible(not is_visible)
         if not is_visible:
             self.fav_search_bar.setFocus()
-            self.show_fav_panel()
+            self.update_favorites_panel()
         else:
             self.fav_search_bar.clear()
             self.hide_fav_panel()
@@ -462,24 +454,43 @@ class StandaloneHub(QMainWindow):
         gc.collect()
 
     def update_favorites_panel(self, filter_text=""):
-        if not hasattr(self, 'fav_hbox') or not self.fav_hbox: return
+        if not hasattr(self, 'fav_panel_widget'): return
         while self.fav_hbox.count():
             item = self.fav_hbox.takeAt(0)
             if item.widget(): item.widget().deleteLater()
             
-        fav_items = [b for b in self.buttons_list if b.get("favorite", False)]
-        if filter_text: fav_items = [b for b in fav_items if filter_text.strip().lower() in b["label"].lower()]
+        all_items = self.buttons_list + getattr(self, 'folders_list', [])
+        fav_items = [b for b in all_items if b.get("favorite", False)]
+        
+        if filter_text: 
+            fav_items = [b for b in fav_items if filter_text.strip().lower() in b.get("label", "").lower()]
+            
+        if not fav_items:
+            self.fav_panel_widget.setVisible(False)
+            return
+            
+        self.fav_panel_widget.setVisible(True)
         bg_rgba = f"rgba({QColor(self.accent_color).red()}, {QColor(self.accent_color).green()}, {QColor(self.accent_color).blue()}, 0.85)"
             
         for item in fav_items:
-            btn = QPushButton(item["label"])
+            btn = QPushButton(item.get("label", "Favorito"))
             btn.setObjectName("FavItemBtn")
             btn.setFixedSize(140, 32)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(f"QPushButton#FavItemBtn {{ background-color: {bg_rgba}; border: 1px solid rgba(0,0,0,0.5); color: #07080a; font-size: 12px; font-weight: bold; border-radius: 4px; }} QPushButton#FavItemBtn:hover {{ background-color: {self.accent_color}; }}")
-            btn.clicked.connect(lambda checked, u=item["url"], l=item["label"]: self.open_web_tab(u, l))
+            
+            if item.get("type") == "folder":
+                btn.clicked.connect(lambda checked, f=item: self.open_folder_from_fav(f))
+            else:
+                btn.clicked.connect(lambda checked, u=item.get("url", ""), l=item.get("label", ""): self.open_web_tab(u, l))
+                
             self.fav_hbox.addWidget(btn)
         self.fav_hbox.addStretch()
+
+    def open_folder_from_fav(self, folder_data):
+        from ui.components import FolderPanelWidget
+        panel = FolderPanelWidget(self, folder_data)
+        panel.exec()
 
     def show_fav_panel(self):
         if hasattr(self, 'fav_area_layout') and self.fav_area_layout.currentWidget() != self.fav_panel_widget:
@@ -495,7 +506,10 @@ class StandaloneHub(QMainWindow):
         if not hasattr(self, 'home_widget') or not self.home_widget or self.tabs.currentIndex() != 0:
             self.hide_fav_panel()
             return
-        if not any(b.get("favorite", False) for b in self.buttons_list): return
+        
+        all_items = self.buttons_list + getattr(self, 'folders_list', [])
+        if not any(b.get("favorite", False) for b in all_items): return
+        
         if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible() and self.fav_search_bar.hasFocus(): return
         
         cursor_pos = self.mapFromGlobal(QCursor.pos())
@@ -507,7 +521,8 @@ class StandaloneHub(QMainWindow):
             return True
             
         if obj == self.tabs.tabBar() and event.type() == QEvent.Type.MouseMove and self.tabs.currentIndex() == 0:
-            if any(b.get("favorite", False) for b in self.buttons_list): self.show_fav_panel()
+            all_items = self.buttons_list + getattr(self, 'folders_list', [])
+            if any(b.get("favorite", False) for b in all_items): self.show_fav_panel()
         return super().eventFilter(obj, event)
 
     def delete_button_by_data(self, item_data):
@@ -571,7 +586,6 @@ class StandaloneHub(QMainWindow):
             self.lbl_status.setText("Download concluído com sucesso!")
             QTimer.singleShot(4000, lambda: self.lbl_status.setText("") if "concluído" in self.lbl_status.text() else None)
 
-    # --- MENU E CONFIGURAÇÕES DE PERFIL ---
     def edit_user_name(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Perfil")
@@ -629,11 +643,14 @@ class StandaloneHub(QMainWindow):
         self.fav_area_layout.setContentsMargins(0,0,0,0)
         self.fav_placeholder = QWidget()
         self.fav_placeholder.setStyleSheet("background: transparent; border-image: none;")
+        
         self.fav_panel_widget = QWidget()
         self.fav_panel_widget.setObjectName("FavPanelWidget")
         self.fav_hbox = QHBoxLayout(self.fav_panel_widget)
         self.fav_hbox.setContentsMargins(15, 0, 15, 0)
         self.fav_hbox.setSpacing(10)
+        self.fav_panel_widget.setVisible(False)
+        
         self.fav_area_layout.addWidget(self.fav_placeholder) 
         self.fav_area_layout.addWidget(self.fav_panel_widget) 
         home_vertical_layout.addWidget(self.fav_area)
@@ -712,7 +729,7 @@ class StandaloneHub(QMainWindow):
         grid_container_hbox.addStretch()
         content_layout.addLayout(grid_container_hbox)
 
-        content_layout.addSpacing(10) # <-- Ajuste refinado do Bem-Vindo
+        content_layout.addSpacing(10) # <-- Ajuste de Subida da Caixa (10px)
         
         welcome_layout = QHBoxLayout()
         welcome_layout.setContentsMargins(0, 0, 0, 0)
@@ -852,7 +869,7 @@ class StandaloneHub(QMainWindow):
         if hasattr(self, 'fav_panel_widget'):
             self.fav_panel_widget.setStyleSheet(f"""
                 QWidget#FavPanelWidget {{
-                    background-color: rgba(15, 18, 25, 0.95);
+                    background-color: rgba(15, 18, 25, 0.90);
                     border-bottom: 2px solid {accent};
                 }}
             """)
@@ -923,33 +940,23 @@ class StandaloneHub(QMainWindow):
 
     def filter_buttons_by_search(self, text):
         self.search_filter = text
-        filtered_list = [b for b in self.buttons_list if self.search_filter.strip().lower() in b.get("label", "").lower()]
-        self.render_grid(self.grid_layout, filtered_list)
+        # 1. Busca nos botões normais
+        filtered_btns = [b for b in self.buttons_list if self.search_filter.strip().lower() in b.get("label", "").lower()]
         
-        max_pages = max(0, (len(filtered_list) - 1) // self.items_per_page)
+        # 2. Busca nas Pastas (Nova correção para pastas ficarem visíveis e pesquisáveis)
+        filtered_folders = [f for f in getattr(self, 'folders_list', []) if self.search_filter.strip().lower() in f.get("label", "").lower()]
+        
+        # 3. Junta as duas gavetas (Botões + Pastas)
+        combined_list = filtered_btns + filtered_folders
+        
+        self.render_grid(self.grid_layout, combined_list)
+        
+        # Agora a paginação conta o total correto incluindo as pastas
+        max_pages = max(0, (len(combined_list) - 1) // self.items_per_page)
         if hasattr(self, 'btn_next_page'):
             self.btn_next_page.setEnabled(self.current_page < max_pages)
             self.btn_prev_page.setEnabled(self.current_page > 0)
             self.page_label.setText(f"Página {self.current_page + 1}")
-
-    def render_grid(self, layout, items):
-        while layout.count():
-            child = layout.takeAt(0)
-            if child.widget(): child.widget().deleteLater()
-                
-        all_items = items
-        if layout == self.grid_layout:
-            all_items = items + getattr(self, 'folders_list', [])
-        
-        page_items = all_items[self.current_page * self.items_per_page : (self.current_page * self.items_per_page) + self.items_per_page] if layout == self.grid_layout else all_items
-        
-        row, col = 0, 0
-        for item in page_items:
-            btn = DraggableToolButton(item_data=item, item_index=all_items.index(item), parent_hub=self)
-            btn.setFixedSize(220, 145)
-            layout.addWidget(btn, row, col)
-            col += 1
-            if col > 3: col, row = 0, row + 1
 
     def log_history(self, label, url):
         date_str, time_str = datetime.datetime.now().strftime("%Y-%m-%d"), datetime.datetime.now().strftime("%H:%M")
@@ -1123,37 +1130,6 @@ class StandaloneHub(QMainWindow):
             self.security_settings = dialog.final_data
             self.save_settings(force=True)
 
-    def open_swap_dialog(self, item_data):
-        from ui.dialogs import SwapButtonDialog
-        dialog = SwapButtonDialog(self, item_data)
-        dialog.exec()
-        
-    def swap_items(self, src_idx, target_idx):
-        all_items = self.buttons_list + getattr(self, 'folders_list', [])
-        if src_idx < 0 or src_idx >= len(all_items) or target_idx < 0 or target_idx >= len(all_items): return
-            
-        all_items[src_idx], all_items[target_idx] = all_items[target_idx], all_items[src_idx]
-        
-        new_buttons = []
-        new_folders = []
-        for item in all_items:
-            if item.get("type") == "folder":
-                new_folders.append(item)
-            else:
-                new_buttons.append(item)
-                
-        self.buttons_list = new_buttons
-        self.folders_list = new_folders
-        
-        self.save_settings(force=True)
-        self.filter_buttons_by_search(self.search_filter)
-        
-        from PyQt6.QtWidgets import QApplication
-        from ui.components import FolderPanelWidget
-        for widget in QApplication.topLevelWidgets():
-            if isinstance(widget, FolderPanelWidget):
-                widget.refresh_grid()
-                
     def handle_tab_click(self, index):
         pass
 
@@ -1174,6 +1150,7 @@ class StandaloneHub(QMainWindow):
     def restore_extensions_state(self):
         from ui.dialogs import ExtensionsDialog
         dummy_dialog = ExtensionsDialog(self, None) 
+        
         status = getattr(self, 'extensions_status', {})
         for ext_name, is_active in status.items():
             if is_active:
@@ -1181,3 +1158,73 @@ class StandaloneHub(QMainWindow):
                     dummy_dialog.toggle_adblock(True)
                 elif ext_name == "Dark Mode Universal":
                     dummy_dialog.toggle_darkmode(True)
+                    
+    def open_swap_dialog(self, item_data):
+        from ui.dialogs import SwapButtonDialog
+        dialog = SwapButtonDialog(self, item_data)
+        dialog.exec()
+
+    # --- NOVO: BUSCA SEGURA DE ID FÍSICO NA MEMÓRIA ---
+    def get_global_item_index(self, item):
+        all_items = self.buttons_list + getattr(self, 'folders_list', [])
+        for idx, obj in enumerate(all_items):
+            if id(obj) == id(item):
+                return idx
+        return -1
+
+    # --- MOTOR DE TROCA UNIVERSAL (SWAP) ---
+    def swap_items(self, src_idx, target_idx):
+        all_items = self.buttons_list + getattr(self, 'folders_list', [])
+        
+        if src_idx < 0 or src_idx >= len(all_items) or target_idx < 0 or target_idx >= len(all_items):
+            return
+            
+        # Troca os itens de posição
+        all_items[src_idx], all_items[target_idx] = all_items[target_idx], all_items[src_idx]
+        
+        # A MÁGICA: Guarda todos na mesma gaveta para a ordem visual nunca mais ser separada/perdida!
+        self.buttons_list = all_items
+        self.folders_list = []
+        
+        self.save_settings(force=True)
+        self.filter_buttons_by_search(self.search_filter)
+        
+        from PyQt6.QtWidgets import QApplication
+        from ui.components import FolderPanelWidget
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, FolderPanelWidget):
+                widget.refresh_grid()
+
+    def filter_buttons_by_search(self, text):
+        self.search_filter = text
+        all_items = self.buttons_list + getattr(self, 'folders_list', [])
+        
+        filtered_list = [item for item in all_items if self.search_filter.strip().lower() in item.get("label", "").lower()]
+        
+        self.render_grid(self.grid_layout, filtered_list)
+        
+        max_pages = max(0, (len(filtered_list) - 1) // self.items_per_page)
+        if hasattr(self, 'btn_next_page'):
+            self.btn_next_page.setEnabled(self.current_page < max_pages)
+            self.btn_prev_page.setEnabled(self.current_page > 0)
+            self.page_label.setText(f"Página {self.current_page + 1}")
+
+    def render_grid(self, layout, items):
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget(): child.widget().deleteLater()
+                
+        if layout == self.grid_layout:
+            page_items = items[self.current_page * self.items_per_page : (self.current_page * self.items_per_page) + self.items_per_page]
+        else:
+            page_items = items
+        
+        row, col = 0, 0
+        for item in page_items:
+            global_idx = self.get_global_item_index(item) # Localiza com precisão absoluta
+            
+            btn = DraggableToolButton(item_data=item, item_index=global_idx, parent_hub=self)
+            btn.setFixedSize(220, 145)
+            layout.addWidget(btn, row, col)
+            col += 1
+            if col > 3: col, row = 0, row + 1
