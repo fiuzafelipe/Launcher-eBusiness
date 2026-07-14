@@ -1,5 +1,5 @@
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEnginePage
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QColor
 
@@ -7,8 +7,13 @@ class BrowserTab(QWebEngineView):
     def __init__(self, hub, profile, url, title, is_pinned=False, lazy_load=False):
         super().__init__(hub)
         self.hub = hub
-        
         self.web_page = QWebEnginePage(profile, self)
+        
+        # Permissões vitais para Lives e Vídeos funcionarem
+        settings = self.web_page.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
+        
         self.setPage(self.web_page)
         
         if "whatsapp.com" in url:
@@ -34,6 +39,21 @@ class BrowserTab(QWebEngineView):
             self.setUrl(QUrl(url))
             if url in self.hub.zoom_settings:
                 self.setZoomFactor(self.hub.zoom_settings[url])
+        
+        self.page().fullScreenRequested.connect(self.handle_fullscreen)
+
+    def handle_fullscreen(self, request):
+        if request.toggleOn():
+            # Salva o estado atual (se estava maximizado ou normal)
+            self.previous_state = self.hub.windowState()
+            self.hub.showFullScreen() # Isso coloca o HUB inteiro em Fullscreen
+            request.accept()
+        else:
+            self.hub.showNormal() # Tira do modo fullscreen forçado
+            # Restaura o estado anterior (se era maximizado, volta a ser)
+            if hasattr(self, 'previous_state'):
+                self.hub.setWindowState(self.previous_state)
+            request.accept()
 
     def handle_title_changed(self, title):
         self.hub.update_tab_title(self, title)

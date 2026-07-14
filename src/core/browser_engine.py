@@ -3,6 +3,8 @@ import shutil
 from PyQt6.QtWebEngineCore import (QWebEngineProfile, QWebEngineSettings, 
                                    QWebEngineUrlRequestInterceptor)
 
+from core.interceptor import AppInterceptor
+
 class HeaderInterceptor(QWebEngineUrlRequestInterceptor):
     def interceptRequest(self, info):
         info.setHttpHeader(b"Accept-Language", b"pt-BR,pt;q=0.9,en-US;q=0.8")
@@ -32,7 +34,10 @@ class BrowserEngine:
         self.profile.setHttpUserAgent(QWebEngineProfile.defaultProfile().httpUserAgent())
         self.profile.setHttpAcceptLanguage("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
         
-        self.interceptor = HeaderInterceptor()
+        from core.interceptor import AppInterceptor
+
+        # No seu método de inicialização do profile:
+        self.interceptor = AppInterceptor()
         self.profile.setUrlRequestInterceptor(self.interceptor)
 
         self._apply_security_settings()
@@ -51,17 +56,28 @@ class BrowserEngine:
 
     def _apply_security_settings(self):
         settings = self.profile.settings()
-        # Exatamente os mesmos parâmetros de segurança
-        settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.ErrorPageEnabled, True)
+        
+        # --- PERFORMANCE E MÍDIA ---
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.WebRTCPublicInterfacesOnly, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.ErrorPageEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AutoLoadImages, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.DnsPrefetchEnabled, True)
+        
+        # --- SEGURANÇA E INTEGRAÇÃO ---
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.WebRTCPublicInterfacesOnly, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        
+        # --- SEGURANÇA CONTRA INJEÇÃO ---
+        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, False)
+        
+        print("[ENGINE] Configurações de segurança e mídia aplicadas.")
 
     def get_profile(self):
         """Retorna o profile configurado para ser usado nas abas."""

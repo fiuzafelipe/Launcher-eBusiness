@@ -1138,11 +1138,11 @@ class MediaControlDialog(QDialog):
         inner_layout = QVBoxLayout(bg)
         inner_layout.setContentsMargins(15, 15, 15, 15)
         
-        lbl_status = QLabel("🎵 Tocando Agora")
+        lbl_status = QLabel("🎵 Controle de Áudio Hub")
         lbl_status.setStyleSheet(f"color: {accent}; font-weight: bold; font-size: 12px;")
         lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        lbl_track = QLabel("Nenhuma mídia em reprodução")
+        lbl_track = QLabel("Gerenciar som de segundo plano")
         lbl_track.setStyleSheet("font-size: 14px; font-weight: 600;")
         lbl_track.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
@@ -1156,6 +1156,9 @@ class MediaControlDialog(QDialog):
         btn_play.setStyleSheet(f"QPushButton {{ background-color: {accent}; color: #000; font-size: 24px; border-radius: 22px; }} QPushButton:hover {{ background-color: #fff; }}")
         btn_next.setFixedSize(40, 40)
         
+        # --- LIGA O BOTÃO CENTRAL AO MUTE GLOBAL DO HUB ---
+        btn_play.clicked.connect(self.toggle_global_audio)
+        
         controls_layout.addStretch()
         controls_layout.addWidget(btn_prev)
         controls_layout.addWidget(btn_play)
@@ -1168,9 +1171,20 @@ class MediaControlDialog(QDialog):
         
         layout.addWidget(bg)
 
+    def toggle_global_audio(self):
+        """Varre as abas e alterna o mute da aba que estiver reproduzindo som no momento."""
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+        for i in range(1, self.hub.tabs.count()):
+            widget = self.hub.tabs.widget(i)
+            if isinstance(widget, QWebEngineView):
+                if widget.page().recentlyAudible() or widget.page().isAudioMuted():
+                    # Executa a alternância usando o método agnóstico da MainWindow
+                    self.hub.toggle_tab_mute(i)
+                    self.accept()
+                    return
+
     def showEvent(self, event):
         parent_rect = self.parent().geometry()
-        # Posiciona no canto superior direito do painel, logo abaixo dos botões
         x = parent_rect.x() + parent_rect.width() - self.width() - 25
         y = parent_rect.y() + 70
         self.move(x, y)
@@ -1187,8 +1201,6 @@ class ExtensionsDialog(QDialog):
         self.setup_ui()
 
     def setup_ui(self):
-        from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QGraphicsDropShadowEffect
-        
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
@@ -1217,7 +1229,6 @@ class ExtensionsDialog(QDialog):
         self.ext_list = QListWidget()
         self.ext_list.setCursor(Qt.CursorShape.PointingHandCursor)
         
-        # O Hub lembrará quais estão ligadas olhando para os scripts ativos
         self.active_scripts = [s.name() for s in self.hub.profile.scripts().toList()]
         
         adblock_icon = "🟢" if "fiuza-adblock" in self.active_scripts else "🔴"
@@ -1225,8 +1236,7 @@ class ExtensionsDialog(QDialog):
         
         self.exts = {
             "AdBlocker Global": {"icon": adblock_icon, "func": self.toggle_adblock},
-            "Dark Mode Universal": {"icon": dark_icon, "func": self.toggle_darkmode},
-            "Picture-in-Picture (PiP)": {"icon": "▶", "func": self.trigger_pip}
+            "Dark Mode Universal": {"icon": dark_icon, "func": self.toggle_darkmode}
         }
         
         for ext_name, data in self.exts.items():
@@ -1251,36 +1261,68 @@ class ExtensionsDialog(QDialog):
         return None
 
     def handle_extension_click(self, item):
-        from PyQt6.QtWidgets import QMessageBox
-        browser = self.get_current_browser()
-        
-        text = item.text()
-        ext_name = text.split("  ")[1]
-        
-        if ext_name == "Picture-in-Picture (PiP)":
-            if not browser:
-                QMessageBox.information(self, "Aviso", "Abra um vídeo primeiro para usar o PiP.")
-                return
-            self.trigger_pip(browser)
-            self.accept()
-            return
+        try:
+            from PyQt6.QtWidgets import QMessageBox
+            text = item.text()
             
-        is_active = "🟢" in text
-        new_icon = "🔴" if is_active else "🟢"
-        item.setText(f"{new_icon}  {ext_name}")
-        
-        func = self.exts[ext_name]["func"]
-        func(not is_active)
+            # Limpa a string de forma segura
+            ext_name = text.replace("🟢", "").replace("🔴", "").replace("▶", "").strip()
+            
+            # --- 1. LÓGICA DO PIP ---
+            if "Picture-in-Picture" in ext_name:
+                idx = self.hub.tabs.currentIndex()
+                if idx <= 0:
+                    QMessageBox.warning(self, "Aviso", "Você precisa estar em uma aba de vídeo para usar o PiP.")
+                    return
+                    
+                browser = self.hub.tabs.widget(idx)
+                
+                # Executa o injetor de forma totalmente segura
+                if hasattr(browser, 'page') and browser.page():
+                    self.trigger_pip(browser)
+                else:
+                    QMessageBox.warning(self, "Erro", "Aba atual não suporta esta ação.")
+                
+                # Força o fechamento imediato das janelas do painel
+                self.accept()
+                if self.parent():
+                    try: self.parent().accept()
+                    except: pass
+                return
 
-    # =========================================================
-    # INJETOR DE SCRIPT GLOBAL (Persistência)
-    # =========================================================
-    def inject_global_script(self, script_id, js_code, enable):
+            # --- 2. LÓGICA DO ADBLOCK E DARK MODE ---
+            is_active = "🟢" in text
+            new_is_active = not is_active
+            
+            target_key = None
+            for key in self.exts.keys():
+                if key in ext_name:
+                    target_key = key
+                    break
+                    
+            if target_key:
+                self.hub.extensions_status[target_key] = new_is_active
+                self.hub.save_settings(force=True) 
+                
+                new_icon = "🟢" if new_is_active else "🔴"
+                item.setText(f"{new_icon}  {target_key}")
+                
+                func = self.exts[target_key]["func"]
+                func(new_is_active)
+                
+        # SE OCORRER UM ERRO OCULTO NO PYTHON, ELE VAI MOSTRAR AQUI:
+        except Exception as e:
+            import traceback
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Erro Fatal", f"Erro detectado no clique:\n{str(e)}\n\n{traceback.format_exc()}")
+
+    def inject_global_script(self, script_id, js_code, removal_code, enable):
         from PyQt6.QtWebEngineCore import QWebEngineScript
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+        
         profile = self.hub.profile
         scripts = profile.scripts()
         
-        # Correção PyQt6: Transforma a coleção em lista e remove pelo nome
         for s in scripts.toList():
             if s.name() == script_id:
                 scripts.remove(s)
@@ -1294,14 +1336,13 @@ class ExtensionsDialog(QDialog):
             script.setRunsOnSubFrames(True)
             scripts.insert(script)
             
-        # Aplica/Remove instantaneamente em todas as abas abertas
-        for i in range(1, self.hub.tabs.count()):
+        for i in range(self.hub.tabs.count()):
             widget = self.hub.tabs.widget(i)
-            if enable:
-                widget.page().runJavaScript(js_code)
-            else:
-                removal = f"var el = document.getElementById('{script_id}'); if(el) el.remove();"
-                widget.page().runJavaScript(removal)
+            if isinstance(widget, QWebEngineView):
+                if enable:
+                    widget.page().runJavaScript(js_code)
+                else:
+                    widget.page().runJavaScript(removal_code)
 
     def toggle_darkmode(self, enable):
         js_code = """
@@ -1312,32 +1353,27 @@ class ExtensionsDialog(QDialog):
                 document.head.appendChild(style);
             }
         """
-        self.inject_global_script('fiuza-dark-mode', js_code, enable)
+        removal_code = "var el = document.getElementById('fiuza-dark-mode'); if(el) el.remove();"
+        self.inject_global_script('fiuza-dark-mode', js_code, removal_code, enable)
 
     def toggle_adblock(self, enable):
         js_code = """
-            if (!document.getElementById('fiuza-adblock')) {
-                var style = document.createElement('style');
-                style.id = 'fiuza-adblock';
-                style.innerHTML = '.ad, .ads, .advert, .banner, .ad-container, iframe[src*="ads"], [id*="google_ads"], .ytp-ad-module { display: none !important; }';
-                document.head.appendChild(style);
+            if (!window.fiuzaAdSkipper) {
+                window.fiuzaAdSkipper = setInterval(() => {
+                    // Busca diretamente as classes dos botões de pular (sem forçar o recálculo da tela)
+                    var skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
+                    if (skipBtn) {
+                        skipBtn.click();
+                    }
+                    
+                    // Avança vídeos de anúncio forçados
+                    var video = document.querySelector('video');
+                    var adActive = document.querySelector('.ytp-ad-player-overlay, .ad-interrupting');
+                    if (video && adActive && video.duration) {
+                        video.currentTime = video.duration;
+                    }
+                }, 500); // 500ms é o ideal para não pesar o processamento
             }
         """
-        self.inject_global_script('fiuza-adblock', js_code, enable)
-
-    def trigger_pip(self, browser):
-        # Procura especificamente o vídeo que está em estado de reprodução
-        script = """
-            var vids = document.querySelectorAll('video');
-            var v = Array.from(vids).find(vid => !vid.paused) || vids[0];
-            if (v) {
-                if (document.pictureInPictureElement) {
-                    document.exitPictureInPicture();
-                } else {
-                    v.requestPictureInPicture().catch(e => alert("Erro ao abrir PiP: Inicie o vídeo primeiro."));
-                }
-            } else {
-                alert("Nenhum vídeo reproduzindo encontrado na página.");
-            }
-        """
-        browser.page().runJavaScript(script)
+        removal_code = "if (window.fiuzaAdSkipper) { clearInterval(window.fiuzaAdSkipper); window.fiuzaAdSkipper = null; }"
+        self.inject_global_script('fiuza-adblock', js_code, removal_code, enable)

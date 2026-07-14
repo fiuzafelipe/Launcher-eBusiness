@@ -21,7 +21,10 @@ def main():
 
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
         "--disable-popup-blocking "
-        "--enable-features=NetworkServiceInProcess"
+        "--enable-features=NetworkServiceInProcess "
+        "--enable-gpu " 
+        "--ignore-gpu-blocklist "
+        "--enable-media-stream" 
     )
 
     app = QApplication(sys.argv)

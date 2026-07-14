@@ -42,6 +42,7 @@ class StandaloneHub(QMainWindow):
         self.config_file = os.path.join(current_dir, "core", "config.json")
         self.setWindowTitle("Custom Explorer")
         self.resize(1280, 720)
+        self.extensions_status = {}
         
         # Inicialização de caminhos e configs
         self.config_manager = ConfigManager(self.config_file)
@@ -174,8 +175,11 @@ class StandaloneHub(QMainWindow):
         self.apply_styles()
         
         QTimer.singleShot(100, self.restore_tabs)
+        QTimer.singleShot(500, self.restore_extensions_state)
+        
         self.tabs.tabBar().setMouseTracking(True)
         self.tabs.tabBar().installEventFilter(self)
+        self.tabs.tabBar().tabBarClicked.connect(self.handle_tab_click)
 
         self.mouse_check_timer = QTimer(self)
         self.mouse_check_timer.setInterval(200)
@@ -356,24 +360,33 @@ class StandaloneHub(QMainWindow):
         if index <= 0: return 
         widget = self.tabs.widget(index)
         if not isinstance(widget, QWebEngineView): return
-        is_pinned = widget.property("is_pinned")
-        menu = QMenu(self)
-        menu.setStyleSheet(f"QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; padding: 5px; }} QMenu::item {{ padding: 8px 25px; border-radius: 4px; }} QMenu::item:selected {{ background-color: {self.accent_color}; color: #000; }}")
         
-        if is_pinned:
-            action_unpin = menu.addAction("❌ Desfixar Aba")
-            if menu.exec(self.tabs.tabBar().mapToGlobal(pos)) == action_unpin:
-                widget.setProperty("is_pinned", False)
-                raw_label = widget.property("original_label") or "Navegação"
-                self.tabs.setTabText(index, raw_label[:20] + ("..." if len(raw_label)>20 else ""))
-                self.save_settings(force=True)
-        else:
-            action_pin = menu.addAction("📌 Fixar Aba")
-            if menu.exec(self.tabs.tabBar().mapToGlobal(pos)) == action_pin:
-                widget.setProperty("is_pinned", True)
-                raw_label = widget.property("original_label") or "Navegação"
-                self.tabs.setTabText(index, "📌 " + raw_label[:18] + ("..." if len(raw_label)>18 else ""))
-                self.save_settings(force=True)
+        is_pinned = widget.property("is_pinned")
+        is_muted = widget.page().isAudioMuted()
+        
+        menu = QMenu(self)
+        menu.setStyleSheet(f"QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; padding: 5px; border-radius: 6px; }} QMenu::item {{ padding: 8px 25px; border-radius: 4px; }} QMenu::item:selected {{ background-color: {self.accent_color}; color: #000; }}")
+        
+        # Opção de Fixar
+        if is_pinned: action_pin = menu.addAction("❌ Desfixar Aba")
+        else: action_pin = menu.addAction("📌 Fixar Aba")
+            
+        menu.addSeparator()
+        
+        # Opção de Mute
+        mute_text = "🔊 Desativar Mudo" if is_muted else "🔇 Silenciar Aba"
+        action_mute = menu.addAction(mute_text)
+        
+        action = menu.exec(self.tabs.tabBar().mapToGlobal(pos))
+        
+        if action == action_pin:
+            widget.setProperty("is_pinned", not is_pinned)
+            raw_label = widget.property("original_label") or "Navegação"
+            icon = "📌 " if not is_pinned else ""
+            self.tabs.setTabText(index, f"{icon}{raw_label[:18]}...")
+            self.save_settings(force=True)
+        elif action == action_mute:
+            self.toggle_tab_mute(index)
 
     def closeEvent(self, event):
         self.save_settings(force=True)
@@ -419,17 +432,18 @@ class StandaloneHub(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-
+        
         if hasattr(self, "theme_btn"):
-
-            self.theme_btn.move(
-                (self.bottom_bar_widget.width() - self.theme_btn.width()) // 2,
-                2
-            )
-
-        if hasattr(self, 'lock_screen') and self.lock_screen.isVisible():
-
-            self.lock_screen.setGeometry(self.rect())
+            self.theme_btn.move((self.bottom_bar_widget.width() - self.theme_btn.width()) // 2, 2)
+        
+        # Correção robusta para o erro do objeto deletado
+        if getattr(self, 'lock_screen', None) is not None:
+            try:
+                if self.lock_screen.isVisible():
+                    self.lock_screen.setGeometry(self.rect())
+            except RuntimeError:
+                # O objeto foi deletado pelo C++, limpamos a referência
+                self.lock_screen = None
 
     def toggle_fav_search(self):
         is_visible = self.fav_search_bar.isVisible()
@@ -1125,6 +1139,7 @@ class StandaloneHub(QMainWindow):
         data = self.config_manager.load()
         self.buttons_list = data.get("buttons", [])
         self.folders_list = data.get("folders", [])
+        self.extensions_status = data.get("extensions_status", {})
         self.auto_save, self.save_tabs_enabled = data.get("auto_save", False), data.get("save_tabs_enabled", False)
         self.theme_mode, self.accent_color, self.theme_base_color = data.get("theme_mode", "Escuro"), data.get("accent_color", "#10b981"), data.get("theme_base_color", "#242120")
         
@@ -1158,6 +1173,7 @@ class StandaloneHub(QMainWindow):
         self.config_manager.save({
             "auto_save": getattr(self, 'auto_save', False),
             "save_tabs_enabled": getattr(self, 'save_tabs_enabled', False),
+            "extensions_status": getattr(self, 'extensions_status', {}),
             "theme_mode": getattr(self, 'theme_mode', 'Escuro'),
             "accent_color": getattr(self, 'accent_color', '#10b981'),
             "theme_base_color": getattr(self, 'theme_base_color', '#242120'),
@@ -1210,21 +1226,52 @@ class StandaloneHub(QMainWindow):
         if index != -1:
             title = "Navegação" if not title.strip() else title
             browser.setProperty("original_label", title)
-            # Verifica se tem som antes de atualizar o título
-            has_audio = browser.page().recentlyAudible()
-            audio_icon = "🔊 " if has_audio else ""
+            # Atualiza indicadores (que agora controlam o botão real)
+            self.update_tab_audio_indicator(browser, browser.page().recentlyAudible())
             
-            self.tabs.setTabText(index, f"{audio_icon}📌 {title[:18]}..." if browser.property("is_pinned") else f"{audio_icon}{title[:20]}")
             if getattr(self, 'save_tabs_enabled', False) and not getattr(self, 'is_restoring', False): 
                 self.save_settings(force=True)
 
-    # Atualiza a aba instantaneamente quando o áudio começa/para
+    def toggle_tab_mute_by_browser(self, browser):
+        # Inverte o mute e força a atualização do ícone sem mudar de aba
+        is_muted = browser.page().isAudioMuted()
+        browser.page().setAudioMuted(not is_muted)
+        self.update_tab_audio_indicator(browser, browser.page().recentlyAudible())
+
     def update_tab_audio_indicator(self, browser, audible):
         index = self.tabs.indexOf(browser)
         if index != -1:
+            from PyQt6.QtWidgets import QPushButton
+            from PyQt6.QtWidgets import QTabBar
+            
+            is_muted = browser.page().isAudioMuted()
+            
+            # Se tem som ou está mutado, mostra o botão do lado ESQUERDO da aba
+            if audible or is_muted:
+                icon_text = "🔇" if is_muted else "🔊"
+                btn = self.tabs.tabBar().tabButton(index, QTabBar.ButtonPosition.LeftSide)
+                
+                if not isinstance(btn, QPushButton):
+                    btn = QPushButton(icon_text)
+                    btn.setFixedSize(22, 22)
+                    btn.setStyleSheet("background: transparent; border: none; font-size: 14px;")
+                    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    btn.setFocusPolicy(Qt.FocusPolicy.NoFocus) # Impede que roube a tela
+                    self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.LeftSide, btn)
+                
+                btn.setText(icon_text)
+                
+                # Desconecta cliques antigos e conecta o novo passando o browser correto
+                try: btn.clicked.disconnect() 
+                except: pass
+                btn.clicked.connect(lambda _, b=browser: self.toggle_tab_mute_by_browser(b))
+            else:
+                self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.LeftSide, None)
+            
+            # Atualiza o título (sem o emoji grudado no texto)
             title = browser.property("original_label") or "Navegação"
-            audio_icon = "🔊 " if audible else ""
-            self.tabs.setTabText(index, f"{audio_icon}📌 {title[:18]}..." if browser.property("is_pinned") else f"{audio_icon}{title[:20]}")
+            is_pinned = browser.property("is_pinned")
+            self.tabs.setTabText(index, f"📌 {title[:18]}..." if is_pinned else f"{title[:20]}")
 
     def sync_all_whatsapp_themes(self):
         """Apenas manda as abas atualizarem seus próprios temas"""
@@ -1251,6 +1298,11 @@ class StandaloneHub(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.security_settings = dialog.final_data
             self.save_settings(force=True)
+    
+    def handle_tab_click(self, index):
+        # Limpamos isso! Agora o botão de mute será isolado, 
+        # então o clique normal na aba volta a funcionar só para navegar.
+        pass
 
     def close_tab(self, index):
         if index != 0:
@@ -1265,3 +1317,18 @@ class StandaloneHub(QMainWindow):
             for t in list(self.opened_tabs_urls):
                 if not any(p["url"] == t["url"] for p in getattr(self, 'pinned_tabs', [])): self.open_web_tab(t["url"], t["label"], is_pinned=False, lazy_load=False)
         QTimer.singleShot(200, lambda: [setattr(self, 'is_restoring', False), self.tabs.setCurrentIndex(0)])
+
+    def restore_extensions_state(self):
+        """Reaplica o estado das extensões ao abrir o programa."""
+        from ui.dialogs import ExtensionsDialog
+        # Cria uma instância temporária apenas para disparar a injeção
+        dummy_dialog = ExtensionsDialog(self, None) 
+        
+        status = getattr(self, 'extensions_status', {})
+        for ext_name, is_active in status.items():
+            if is_active:
+                # Dispara a injeção sem precisar abrir a janela
+                if ext_name == "AdBlocker Global":
+                    dummy_dialog.toggle_adblock(True)
+                elif ext_name == "Dark Mode Universal":
+                    dummy_dialog.toggle_darkmode(True)
