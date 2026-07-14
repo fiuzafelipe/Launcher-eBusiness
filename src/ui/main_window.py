@@ -25,10 +25,89 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import (QWebEngineProfile, QWebEnginePage, QWebEngineSettings,
                                    QWebEnginePermission, QWebEngineDownloadRequest,
                                    QWebEngineScript, QWebEngineUrlRequestInterceptor)
-from PyQt6.QtCore import QUrl, Qt, QPoint, QTimer, QEvent, QPointF
-from PyQt6.QtGui import QColor, QImage, QShortcut, QKeySequence, QCursor, QPainter, QPainterPath, QPen, QIcon
+from PyQt6.QtCore import QUrl, Qt, QPoint, QTimer, QEvent, QPointF, QVariantAnimation, QEasingCurve
+from PyQt6.QtGui import QColor, QImage, QShortcut, QKeySequence, QCursor, QPainter, QPainterPath, QPen, QIcon, QPixmap
 
 current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# =========================================================================================
+# BOTÃO ANIMADO (Logo Central Premium)
+# =========================================================================================
+class AnimatedLogoButton(QPushButton):
+    def __init__(self, image_path, parent_hub=None):
+        super().__init__(parent_hub)
+        self.hub = parent_hub
+        # Reduzido levemente para garantir espaço perfeito para a caixa de boas vindas
+        self.setFixedSize(110, 110) 
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("background: transparent; border: none; outline: none;")
+        self.setToolTip("Aplicação desenvolvida por Felipe Fiuza! Bom uso.")
+        
+        self._scale = 1.0
+        self._y_offset = 0.0
+
+        self.update_image(image_path)
+        
+        self.anim_scale = QVariantAnimation(self)
+        self.anim_scale.setDuration(250)
+        self.anim_scale.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.anim_scale.valueChanged.connect(self.update_scale)
+
+        self.anim_float = QVariantAnimation(self)
+        self.anim_float.setDuration(250)
+        self.anim_float.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.anim_float.valueChanged.connect(self.update_float)
+
+    def update_image(self, image_path):
+        if os.path.exists(image_path):
+            self.original_pixmap = QPixmap(image_path)
+        else:
+            self.original_pixmap = QPixmap(90, 90)
+            self.original_pixmap.fill(Qt.GlobalColor.transparent)
+            
+        self.pixmap = self.original_pixmap.scaled(90, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        self.update()
+
+    def update_scale(self, value):
+        self._scale = value
+        self.update()
+
+    def update_float(self, value):
+        self._y_offset = value
+        self.update()
+
+    def enterEvent(self, event):
+        self.anim_scale.setStartValue(self._scale)
+        self.anim_scale.setEndValue(1.10)
+        self.anim_scale.start()
+
+        self.anim_float.setStartValue(self._y_offset)
+        self.anim_float.setEndValue(-6.0)
+        self.anim_float.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.anim_scale.setStartValue(self._scale)
+        self.anim_scale.setEndValue(1.0)
+        self.anim_scale.start()
+
+        self.anim_float.setStartValue(self._y_offset)
+        self.anim_float.setEndValue(0.0)
+        self.anim_float.start()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        
+        painter.translate(self.width() / 2, self.height() / 2 + self._y_offset)
+        painter.scale(self._scale, self._scale)
+        
+        x = -self.pixmap.width() / 2
+        y = -self.pixmap.height() / 2
+        painter.drawPixmap(int(x), int(y), self.pixmap)
+
 
 class HomePanelAdapter(QWidget):
     def __init__(self, hub):
@@ -44,27 +123,18 @@ class StandaloneHub(QMainWindow):
         self.resize(1280, 720)
         self.extensions_status = {}
         
-        # Inicialização de caminhos e configs
         self.config_manager = ConfigManager(self.config_file)
         self.icons_dir = os.path.join(os.path.dirname(current_dir), "assets", "icons")
         os.makedirs(self.icons_dir, exist_ok=True)
         
-        # ============================================================
-        # MOTOR DO NAVEGADOR (Isolado)
-        # Mantém intactas as sessões do Google e configs do WhatsApp
-        # ============================================================
         self.browser_engine = BrowserEngine(self)
         self.profile = self.browser_engine.get_profile()
         self.storage_path = self.browser_engine.storage_path
 
-        # ============================================================
-        # VARIÁVEIS E PRESETS ORIGINAIS
-        # ============================================================
         self.presets = {"Padrão (preto/branco)": {"theme": "#242120", "accent": "#d9d9d9"}, "Verde": {"theme": "#0f2419", "accent": "#12d97c"}, "Vermelho": {"theme": "#270d0d", "accent": "#d91e10"}, "Azul Claro": {"theme": "#0d2721", "accent": "#0dd9a6"}, "Azul Escuro": {"theme": "#0d0d27", "accent": "#0d0dd9"}, "Laranja": {"theme": "#271a0c", "accent": "#d9790c"}, "Amarelo": {"theme": "#27270c", "accent": "#d9d9d9"}, "Roxo Claro": {"theme": "#270d27", "accent": "#d90ccf"}, "Rosa": {"theme": "#270d14", "accent": "#d90c3c"}, "Branco": {"theme": "#d6dcd1", "accent": "#ffffff"}}
         self.current_page, self.items_per_page, self.is_restoring, self.search_filter, self.is_wp_light = 0, 8, False, "", False
         self.load_settings()
         
-        # APLICA ICONE SALVO
         try:
             icon_path = os.path.join(self.icons_dir, self.app_icon)
             if os.path.exists(icon_path):
@@ -137,22 +207,10 @@ class StandaloneHub(QMainWindow):
         self.btn_save_session.setFixedSize(100, 30)
         self.btn_save_session.clicked.connect(self.trigger_save_tabs_button)
 
-        # LADO ESQUERDO
-        self.bottom_bar.addWidget(
-            self.lbl_status,
-            alignment=Qt.AlignmentFlag.AlignVCenter
-        )
-
-        # ESPAÇO CENTRAL RESERVADO
+        self.bottom_bar.addWidget(self.lbl_status, alignment=Qt.AlignmentFlag.AlignVCenter)
         self.bottom_bar.addStretch()
+        self.bottom_bar.addWidget(self.btn_save_session, alignment=Qt.AlignmentFlag.AlignVCenter)
 
-        # LADO DIREITO
-        self.bottom_bar.addWidget(
-            self.btn_save_session,
-            alignment=Qt.AlignmentFlag.AlignVCenter
-        )
-
-        # BOTÃO TEMA FICA INDEPENDENTE
         self.theme_btn = ThemeSelectorButton(self)
         self.theme_btn.setFixedSize(40,40)
         shadow = QGraphicsDropShadowEffect()
@@ -161,12 +219,8 @@ class StandaloneHub(QMainWindow):
         shadow.setColor(QColor(self.accent_color))
 
         self.theme_btn.setGraphicsEffect(shadow)
-        
         self.theme_btn.setParent(self.bottom_bar_widget)
-        self.theme_btn.move(
-            (self.bottom_bar_widget.width() - 40) // 2,
-            2
-        )
+        self.theme_btn.move((self.bottom_bar_widget.width() - 40) // 2, 2)
         self.theme_btn.raise_()
         
         self.main_layout.addWidget(self.bottom_bar_widget)
@@ -186,7 +240,6 @@ class StandaloneHub(QMainWindow):
         self.mouse_check_timer.timeout.connect(self.check_mouse_position_for_favorites)
         self.mouse_check_timer.start()
 
-        # Atalhos existentes
         self.shortcut_right = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
         self.shortcut_right.activated.connect(self.safe_next_page)
         self.shortcut_left = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
@@ -194,18 +247,12 @@ class StandaloneHub(QMainWindow):
         self.shortcut_esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.shortcut_esc.activated.connect(self.safe_close_search)
         
-        # --- NOVO: Atalho da Command Palette ---
         self.shortcut_cmd = QShortcut(QKeySequence("Ctrl+K"), self)
         self.shortcut_cmd.activated.connect(self.show_command_palette)
 
         self.showMaximized()
         if getattr(self, 'security_settings', {}) and self.security_settings.get("enabled", False):
             self.show_lock_screen()
-
-# ===================================================================================================
-# TODOS OS OUTROS MÉTODOS (force_clean_session, logout_google, apply_styles, etc) CONTINUAM IGUAIS
-# Você não precisa alterar absolutamente nada abaixo da função __init__
-# ===================================================================================================
 
     def force_clean_session(self):
         try:
@@ -217,143 +264,39 @@ class StandaloneHub(QMainWindow):
             print("[SESSION CLEAN ERROR]", e)
 
     def logout_google(self):
-
         try:
-
             for i in range(1, self.tabs.count()):
-
                 browser = self.tabs.widget(i)
-
                 if isinstance(browser, QWebEngineView):
-
-                    browser.setUrl(
-                        QUrl(
-                            "https://accounts.google.com/Logout"
-                        )
-                    )
-
+                    browser.setUrl(QUrl("https://accounts.google.com/Logout"))
                     break
-
-
-            QTimer.singleShot(
-                5000,
-                self.reload_browser_session
-            )
-
-
-            QMessageBox.information(
-                self,
-                "Logout Google",
-                "Conta Google desconectada."
-            )
-
-            print("[GOOGLE] Logout realizado")
-
+            QTimer.singleShot(5000, self.reload_browser_session)
+            QMessageBox.information(self, "Logout Google", "Conta Google desconectada.")
         except Exception as e:
-
             print("[LOGOUT ERROR]", e)
 
     def reload_browser_session(self):
-
-        """
-        Recarrega perfil Chromium sem fechar programa
-        """
-
         try:
-
             for i in range(1, self.tabs.count()):
-
                 widget = self.tabs.widget(i)
-
                 if isinstance(widget, QWebEngineView):
-
                     widget.reload()
-
-
-            print("[SESSION] Relogin preparado")
-
-
         except Exception as e:
-
             print("[RELOGIN ERROR]", e)
 
     def clear_google_storage(self):
-
-        """
-        Limpa completamente a sessão Google/Chromium
-        Remove:
-        - Cookies
-        - Cache
-        - LocalStorage
-        - IndexedDB
-        - Sessões salvas
-        - Permissões
-        """
-
-        reply = QMessageBox.question(
-            self,
-            "Limpar sessão Google",
-            "Isso removerá todos os logins salvos do navegador.\n\n"
-            "Deseja continuar?",
-            QMessageBox.StandardButton.Yes |
-            QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
+        reply = QMessageBox.question(self, "Limpar sessão Google", "Isso removerá todos os logins salvos do navegador.\n\nDeseja continuar?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes: return
         try:
-
-            print("[SESSION] Iniciando limpeza...")
-
-            # Remove cookies
             self.profile.cookieStore().deleteAllCookies()
-
-            # Limpa cache Chromium
             self.profile.clearHttpCache()
-
-            # Limpa histórico
             self.profile.clearAllVisitedLinks()
-
-            # Remove storage completo
             if os.path.exists(self.storage_path):
-
-                shutil.rmtree(
-                    self.storage_path,
-                    ignore_errors=True
-                )
-
-            # Recria pasta limpa
-
-            os.makedirs(
-                self.storage_path,
-                exist_ok=True
-            )
-
-            QMessageBox.information(
-                self,
-                "Sessão limpa",
-                "Dados Google removidos com sucesso.\n\n"
-                "Reinicie o Custom Explorer."
-            )
-
-            print(
-                "[SESSION] Storage Google resetado"
-            )
-
+                shutil.rmtree(self.storage_path, ignore_errors=True)
+            os.makedirs(self.storage_path, exist_ok=True)
+            QMessageBox.information(self, "Sessão limpa", "Dados Google removidos com sucesso.\n\nReinicie o Custom Explorer.")
         except Exception as e:
-
-            QMessageBox.warning(
-                self,
-                "Erro",
-                str(e)
-            )
-
-            print(
-                "[CLEAR SESSION ERROR]",
-                e
-            )
+            QMessageBox.warning(self, "Erro", str(e))
 
     def show_tab_context_menu(self, pos):
         index = self.tabs.tabBar().tabAt(pos)
@@ -367,13 +310,10 @@ class StandaloneHub(QMainWindow):
         menu = QMenu(self)
         menu.setStyleSheet(f"QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; padding: 5px; border-radius: 6px; }} QMenu::item {{ padding: 8px 25px; border-radius: 4px; }} QMenu::item:selected {{ background-color: {self.accent_color}; color: #000; }}")
         
-        # Opção de Fixar
         if is_pinned: action_pin = menu.addAction("❌ Desfixar Aba")
         else: action_pin = menu.addAction("📌 Fixar Aba")
             
         menu.addSeparator()
-        
-        # Opção de Mute
         mute_text = "🔊 Desativar Mudo" if is_muted else "🔇 Silenciar Aba"
         action_mute = menu.addAction(mute_text)
         
@@ -386,7 +326,7 @@ class StandaloneHub(QMainWindow):
             self.tabs.setTabText(index, f"{icon}{raw_label[:18]}...")
             self.save_settings(force=True)
         elif action == action_mute:
-            self.toggle_tab_mute(index)
+            self.toggle_tab_mute_by_browser(widget)
 
     def closeEvent(self, event):
         self.save_settings(force=True)
@@ -408,7 +348,7 @@ class StandaloneHub(QMainWindow):
             
             history_action = menu.addAction("🕒 Histórico")
             folder_action = menu.addAction("📁 Criar Pasta")
-            lock_action = menu.addAction("🔒 Trancar Tela") if self.security_settings.get("enabled", False) else None
+            lock_action = menu.addAction("🔒 Trancar Tela") if getattr(self, 'security_settings', {}).get("enabled", False) else None
             
             action = menu.exec(self.mapToGlobal(event.pos()))
             
@@ -432,17 +372,14 @@ class StandaloneHub(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        
         if hasattr(self, "theme_btn"):
             self.theme_btn.move((self.bottom_bar_widget.width() - self.theme_btn.width()) // 2, 2)
         
-        # Correção robusta para o erro do objeto deletado
         if getattr(self, 'lock_screen', None) is not None:
             try:
                 if self.lock_screen.isVisible():
                     self.lock_screen.setGeometry(self.rect())
             except RuntimeError:
-                # O objeto foi deletado pelo C++, limpamos a referência
                 self.lock_screen = None
 
     def toggle_fav_search(self):
@@ -459,17 +396,11 @@ class StandaloneHub(QMainWindow):
         if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible(): self.toggle_fav_search()
 
     def show_command_palette(self):
-        """Abre a barra de pesquisa rápida global (Ctrl+K)"""
-        # Verifica com segurança se a tela de bloqueio existe e está visível
         try:
-            if hasattr(self, 'lock_screen') and self.lock_screen is not None and self.lock_screen.isVisible():
-                return
+            if hasattr(self, 'lock_screen') and self.lock_screen is not None and self.lock_screen.isVisible(): return
         except RuntimeError:
-            # O objeto C++ já foi deletado da memória (a tela foi desbloqueada)
             self.lock_screen = None
-            
-        palette = CommandPaletteDialog(self)
-        palette.exec()
+        CommandPaletteDialog(self).exec()
 
     def filter_favorites(self, text): self.update_favorites_panel(text)
 
@@ -565,6 +496,10 @@ class StandaloneHub(QMainWindow):
         self.show_fav_panel() if 0 <= cursor_pos.y() <= 95 else self.hide_fav_panel()
 
     def eventFilter(self, obj, event):
+        if obj == getattr(self, 'welcome_label', None) and event.type() == QEvent.Type.MouseButtonDblClick:
+            self.edit_user_name()
+            return True
+            
         if obj == self.tabs.tabBar() and event.type() == QEvent.Type.MouseMove and self.tabs.currentIndex() == 0:
             if any(b.get("favorite", False) for b in self.buttons_list): self.show_fav_panel()
         return super().eventFilter(obj, event)
@@ -573,21 +508,13 @@ class StandaloneHub(QMainWindow):
         from PyQt6.QtWidgets import QApplication
         from ui.components import FolderPanelWidget
         
-        if item_data in getattr(self, 'buttons_list', []):
-            self.buttons_list.remove(item_data)
-            
-        if item_data in getattr(self, 'folders_list', []):
-            self.folders_list.remove(item_data)
-        
+        if item_data in getattr(self, 'buttons_list', []): self.buttons_list.remove(item_data)
+        if item_data in getattr(self, 'folders_list', []): self.folders_list.remove(item_data)
         for folder in getattr(self, 'folders_list', []):
-            if item_data in folder.get("buttons", []):
-                folder["buttons"].remove(item_data)
+            if item_data in folder.get("buttons", []): folder["buttons"].remove(item_data)
         
         lbl_name = item_data.get('label', '').lower()
-        paths_to_check = [
-            os.path.join(self.icons_dir, f"{lbl_name}.png"),
-            os.path.join(self.icons_dir, f"folder_{lbl_name}.png")
-        ]
+        paths_to_check = [os.path.join(self.icons_dir, f"{lbl_name}.png"), os.path.join(self.icons_dir, f"folder_{lbl_name}.png")]
         
         for path in paths_to_check:
             if os.path.exists(path):
@@ -598,14 +525,12 @@ class StandaloneHub(QMainWindow):
         self.filter_buttons_by_search(self.search_filter)
         
         for widget in QApplication.topLevelWidgets():
-            if isinstance(widget, FolderPanelWidget):
-                widget.refresh_grid()
+            if isinstance(widget, FolderPanelWidget): widget.refresh_grid()
 
     def edit_button_dialog(self, item_data):
         if item_data.get("type") == "folder":
             from ui.folder_dialogs import CreateFolderDialog
-            dialog = CreateFolderDialog(self, folder_data=item_data)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
+            if CreateFolderDialog(self, folder_data=item_data).exec() == QDialog.DialogCode.Accepted:
                 self.save_settings(force=True)
                 self.filter_buttons_by_search(self.search_filter)
         else:
@@ -615,8 +540,7 @@ class StandaloneHub(QMainWindow):
 
     def edit_folder_dialog(self, folder_data):
         from ui.dialogs import EditFolderDialog 
-        dialog = EditFolderDialog(self, folder_data)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        if EditFolderDialog(self, folder_data).exec() == QDialog.DialogCode.Accepted:
             self.save_settings(force=True)
             self.filter_buttons_by_search(self.search_filter)
 
@@ -640,6 +564,76 @@ class StandaloneHub(QMainWindow):
         elif download.state() == QWebEngineDownloadRequest.DownloadState.DownloadCompleted:
             self.lbl_status.setText("Download concluído com sucesso!")
             QTimer.singleShot(4000, lambda: self.lbl_status.setText("") if "concluído" in self.lbl_status.text() else None)
+
+    # =========================================================================================
+    # CAIXA DE EDIÇÃO DE NOME E BOAS VINDAS
+    # =========================================================================================
+    def edit_user_name(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Perfil")
+        dialog.setFixedSize(360, 160)
+        dialog.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {self.accent_color}; border-radius: 8px; }}
+            QLabel {{ color: #fff; font-family: 'Segoe UI'; font-size: 14px; font-weight: bold; }}
+            QLineEdit {{ background-color: #161b24; border: 1px solid {self.accent_color}; border-radius: 6px; color: #fff; padding: 10px; font-size: 15px; font-weight: bold; }}
+            QPushButton {{ background-color: {self.accent_color}; color: #000; font-weight: bold; padding: 10px; border-radius: 6px; font-size: 14px; margin-top: 10px; }}
+            QPushButton:hover {{ background-color: #fff; border: 1px solid {self.accent_color}; }}
+        """)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        layout.addWidget(QLabel("Como você quer ser chamado?"))
+        
+        input_name = QLineEdit(getattr(self, 'user_name', 'Felipe Fiuza'))
+        input_name.setPlaceholderText("Digite o seu nome...")
+        layout.addWidget(input_name)
+        
+        btn_save = QPushButton("Salvar Perfil")
+        btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_save.clicked.connect(dialog.accept)
+        layout.addWidget(btn_save)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_name = input_name.text().strip()
+            if new_name:
+                self.user_name = new_name
+                self.update_welcome_text()
+                self.save_settings(force=True)
+
+    def update_welcome_text(self):
+        if hasattr(self, 'welcome_label'):
+            name = getattr(self, 'user_name', 'Felipe Fiuza')
+            self.welcome_label.setText(f"Bem vindo(a): {name}")
+
+    def handle_tab_click(self, index):
+        pass
+
+    def close_tab(self, index):
+        if index != 0:
+            if self.tabs.widget(index): self.tabs.widget(index).deleteLater()
+            self.tabs.removeTab(index)
+            if not getattr(self, 'is_restoring', False): self.save_settings(force=True)
+
+    def restore_tabs(self):
+        self.is_restoring = True
+        for t in getattr(self, 'pinned_tabs', []): self.open_web_tab(t["url"], t["label"], is_pinned=True, lazy_load=True)
+        if getattr(self, 'save_tabs_enabled', False) and self.opened_tabs_urls:
+            for t in list(self.opened_tabs_urls):
+                if not any(p["url"] == t["url"] for p in getattr(self, 'pinned_tabs', [])): self.open_web_tab(t["url"], t["label"], is_pinned=False, lazy_load=False)
+        QTimer.singleShot(200, lambda: [setattr(self, 'is_restoring', False), self.tabs.setCurrentIndex(0)])
+
+    def restore_extensions_state(self):
+        from ui.dialogs import ExtensionsDialog
+        dummy_dialog = ExtensionsDialog(self, None) 
+        
+        status = getattr(self, 'extensions_status', {})
+        for ext_name, is_active in status.items():
+            if is_active:
+                if ext_name == "AdBlocker Global":
+                    dummy_dialog.toggle_adblock(True)
+                elif ext_name == "Dark Mode Universal":
+                    dummy_dialog.toggle_darkmode(True)
 
     def create_home_tab(self):
         if hasattr(self, 'home_widget') and self.home_widget:
@@ -672,31 +666,52 @@ class StandaloneHub(QMainWindow):
         
         self.home_panel_adapter = HomePanelAdapter(self)
 
-        self.grid_container_widget = FolderCableFrame(
-            self.home_panel_adapter
-        )
-
+        self.grid_container_widget = FolderCableFrame(self.home_panel_adapter)
         self.grid_container_widget.setMouseTracking(True)
-
-        self.grid_container_widget.setStyleSheet(
-            """
-            QWidget {
-                border: none;
-                background: transparent;
-            }
-            """
-        )
+        self.grid_container_widget.setStyleSheet("QWidget { border: none; background: transparent; }")
 
         content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(40, 15, 40, 60)
-
+        content_layout.setContentsMargins(40, 0, 40, 0)
+        content_layout.setSpacing(0)
+        
         self.grid_container_widget.setLayout(content_layout)
+        
+        # --- 1. BARRA SUPERIOR ---
+        top_bar_layout = QHBoxLayout()
+        top_bar_layout.setContentsMargins(0, 0, 0, 0)
+        
+        left_spacer = QWidget()
+        left_spacer.setFixedSize(40, 40)
+        top_bar_layout.addWidget(left_spacer, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        
+        top_bar_layout.addStretch() 
+        
+        png_name = getattr(self, 'app_icon', 'Custom Transparent.ico').replace(".ico", ".png")
+        logo_path = os.path.join(self.icons_dir, png_name)
+        
+        self.animated_logo = AnimatedLogoButton(logo_path, parent_hub=self)
+        self.animated_logo.clicked.connect(lambda: AboutDialog(self).exec())
+        top_bar_layout.addWidget(self.animated_logo, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        top_bar_layout.addStretch()
+        
+        self.btn_config_top = QPushButton("⚙️")
+        self.btn_config_top.setFixedSize(40, 40)
+        self.btn_config_top.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_config_top.setToolTip("Configurações")
+        self.btn_config_top.clicked.connect(lambda: SettingsDialog(self).exec())
+        top_bar_layout.addWidget(self.btn_config_top, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        
+        content_layout.addLayout(top_bar_layout)
+
+        # --- 2. CAIXA DE PESQUISA ---
         control_panel_layout = QVBoxLayout()
-        control_panel_layout.setSpacing(10)
+        control_panel_layout.setContentsMargins(0, 0, 0, 0)
+        control_panel_layout.setSpacing(0)
         
         has_wp = hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path)
         text_color = "#111111" if getattr(self, 'is_wp_light', False) else "#f5f5f5"
-        self.current_text_color = text_color # Guarda para atualizar a cor do botão depois
+        self.current_text_color = text_color 
         c_accent = QColor(self.accent_color)
         c_theme = QColor(self.get_active_theme_color())
         
@@ -706,18 +721,6 @@ class StandaloneHub(QMainWindow):
             is_light = c_theme.lightness() > 128
             input_bg, input_text, font_weight, page_color = "rgba(255, 255, 255, 0.1)" if not is_light else "rgba(0, 0, 0, 0.05)", "#ffffff" if not is_light else "#07080a", "bold", "#07080a" if is_light else "#ffffff"
 
-        btn_ops = QPushButton("STANDALONE HUB")
-        btn_ops.setObjectName("btn_ops")
-        btn_ops.setFixedSize(450, 42)
-        btn_ops.clicked.connect(lambda: AboutDialog(self).exec())
-        
-        btn_config_menu = QPushButton("CONFIGURAÇÕES  ⚙")
-        btn_config_menu.setObjectName("btn_config_menu")
-        btn_config_menu.setFixedSize(450, 42)
-        btn_config_menu.clicked.connect(lambda: SettingsDialog(self).exec())
-        self.btn_ops_home = btn_ops
-        self.btn_config_home = btn_config_menu
-        
         self.search_bar = QLineEdit()
         self.theme_search_box = self.search_bar
         self.search_bar.setFixedSize(450, 42)
@@ -726,28 +729,54 @@ class StandaloneHub(QMainWindow):
         self.search_bar.textChanged.connect(self.filter_buttons_by_search)
         self.search_bar.setStyleSheet(f"QLineEdit {{ background-color: {input_bg}; border: 1px solid {self.accent_color}; border-radius: 6px; color: {input_text}; font-family: 'Segoe UI'; font-size: 13px; font-weight: {font_weight}; padding-left: 15px; padding-right: 15px; }} QLineEdit:focus {{ border: 2px solid {self.accent_color}; }}")
         
-        control_panel_layout.addWidget(btn_ops, alignment=Qt.AlignmentFlag.AlignCenter)
-        control_panel_layout.addWidget(btn_config_menu, alignment=Qt.AlignmentFlag.AlignCenter)
         control_panel_layout.addWidget(self.search_bar, alignment=Qt.AlignmentFlag.AlignCenter)
-        
         content_layout.addLayout(control_panel_layout)
-        content_layout.addSpacing(5)
-
+        
+        content_layout.addSpacing(5) 
+        
+        # --- 3. GRID DE BOTÕES ---
         self.grid_layout = QGridLayout()
-
-        self.grid_layout.setSpacing(25)
-
+        self.grid_layout.setSpacing(15)
         self.grid_layout.setContentsMargins(20, 0, 20, 0)
-        self.grid_layout.setSpacing(25)
+        
         grid_container_hbox = QHBoxLayout()
         grid_container_hbox.addStretch()
         grid_container_hbox.addLayout(self.grid_layout)
         grid_container_hbox.addStretch()
         content_layout.addLayout(grid_container_hbox)
 
+        # --- 4. CAIXA DE BOAS VINDAS ELEGANTE ---
+        content_layout.addSpacing(5) # Diminuído espaço superior da caixa
+        
+        welcome_layout = QHBoxLayout()
+        welcome_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.welcome_label = QLabel()
+        self.welcome_label.setObjectName("WelcomeLabel")
+        self.welcome_label.setFixedHeight(38) # Ajustado para não achatar os outros controles
+        self.welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.welcome_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.welcome_label.setToolTip("Dê dois cliques rápidos para alterar o seu nome")
+        
+        shadow_welcome = QGraphicsDropShadowEffect()
+        shadow_welcome.setBlurRadius(20)
+        shadow_welcome.setOffset(0, 3)
+        shadow_welcome.setColor(QColor(0, 0, 0, 150))
+        self.welcome_label.setGraphicsEffect(shadow_welcome)
+        
+        self.welcome_label.installEventFilter(self)
+        
+        welcome_layout.addStretch()
+        welcome_layout.addWidget(self.welcome_label)
+        welcome_layout.addStretch()
+        
+        content_layout.addLayout(welcome_layout)
+        content_layout.addSpacing(5) # Diminuído espaço inferior da caixa
+        # =========================================================
+
         self.nav_container = QWidget()
         nav_layout = QHBoxLayout(self.nav_container)
-        nav_layout.setContentsMargins(0, 10, 0, 10)
+        nav_layout.setContentsMargins(0, 0, 0, 0) # Margem zerada para ganhar espaço
         nav_layout.addStretch()
         nav_style = f"QPushButton {{ background-color: {self.accent_color}; border: 1px solid rgba(0,0,0,0.25); color: #07080a; font-weight: bold; font-size: 15px; border-radius: 5px; }} QPushButton:hover {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40); color: {self.accent_color}; border-color: rgba(255,255,255,0.5); }} QPushButton:disabled {{ border: 1px solid rgba(0,0,0,0.1); color: rgba(120, 120, 120, 0.5); background-color: rgba(0, 0, 0, 0.15); }}"
         
@@ -759,24 +788,7 @@ class StandaloneHub(QMainWindow):
         self.page_label = QLabel(f"Página {self.current_page + 1}")
         self.page_label.setFixedWidth(80) 
         self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.page_label.setStyleSheet(
-            f"""
-            color:
-            {page_color};
-
-            font-weight:
-            {font_weight};
-
-            font-size:
-            14px;
-
-            font-family:
-            'Segoe UI';
-
-            background:
-            transparent;
-            """
-        )
+        self.page_label.setStyleSheet(f"color: {page_color}; font-weight: {font_weight}; font-size: 14px; font-family: 'Segoe UI'; background: transparent;")
 
         self.theme_page_label = self.page_label
         
@@ -801,7 +813,6 @@ class StandaloneHub(QMainWindow):
         home_vertical_layout.addWidget(scroll_area)
         
         home_vertical_layout.addWidget(self.nav_container)
-        home_vertical_layout.addSpacing(10)
 
         self.tabs.insertTab(0, self.home_widget, "Home")
         self.update_favorites_panel()
@@ -826,7 +837,6 @@ class StandaloneHub(QMainWindow):
         
         strong_line, faint_line = f"3px solid {accent}", f"1px solid rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.50)"
 
-        # CORREÇÃO GLOBAL: Definindo a cor sólida e hover transparente como base
         btn_ops_bg = accent 
         btn_ops_hover_bg = f"rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40)"
         btn_ops_hover_text = "#ffffff"
@@ -853,235 +863,80 @@ class StandaloneHub(QMainWindow):
             font_weight = "bold"
             bottom_bar_bg = "transparent"
 
-        self.lbl_status.setStyleSheet(
-            f"""
-            QLabel {{
-                color:{accent};
-                font-family:'Segoe UI';
-                font-weight:bold;
-                font-size:13px;
-                background:transparent;
-            }}
-            """
-        )
+        self.lbl_status.setStyleSheet(f"QLabel {{ color:{accent}; font-family:'Segoe UI'; font-weight:bold; font-size:13px; background:transparent; }}")
         
-        # O stylesheet global agora recebe as cores sólidas corretamente
         self.setStyleSheet(get_main_stylesheet(accent, main_bg, strong_line, faint_line, tabbar_bg, tab_inactive_bg, tab_active_bg, pane_bg, btn_ops_bg, btn_ops_hover_bg, btn_ops_hover_text, text_color, font_weight, bottom_bar_bg, main_bg_style))
         self.update_save_tabs_button_visual()
         
-        # atualiza caixa de pesquisa conforme tema
         if hasattr(self, "theme_search_box"):
-            self.theme_search_box.setStyleSheet(
-                f"""
-                QLineEdit {{
-                    background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.35);
-                    border: 1px solid {accent};
-                    border-radius:6px;
-                    color:{text_color};
-                    font-family:'Segoe UI';
-                    font-size:13px;
-                    font-weight:bold;
-                    padding-left:15px;
-                }}
-                QLineEdit:focus {{
-                    border: 2px solid {accent};
-                }}
-                """
-            )
+            self.theme_search_box.setStyleSheet(f"QLineEdit {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.35); border: 1px solid {accent}; border-radius:6px; color:{text_color}; font-family:'Segoe UI'; font-size:13px; font-weight:bold; padding-left:15px; }} QLineEdit:focus {{ border: 2px solid {accent}; }}")
 
-        # atualiza navegação < >
         if hasattr(self, "btn_prev_page"):
-            nav_style = f"""
-            QPushButton {{
-                background-color: {accent};
-                border: 1px solid rgba(0,0,0,0.25);
-                color: #07080a;
-                font-weight: bold;
-                font-size: 15px;
-                border-radius: 5px;
-            }}
-            QPushButton:hover {{
-                background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40);
-                border: 1px solid {accent};
-                color: #07080a;
-            }}
-            QPushButton:disabled {{
-                border: 1px solid rgba(0,0,0,0.10);
-                color: rgba(120,120,120,0.5);
-                background-color: rgba(0,0,0,0.15);
-            }}
-            """
+            nav_style = f"QPushButton {{ background-color: {accent}; border: 1px solid rgba(0,0,0,0.25); color: #07080a; font-weight: bold; font-size: 15px; border-radius: 5px; }} QPushButton:hover {{ background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40); border: 1px solid {accent}; color: #07080a; }} QPushButton:disabled {{ border: 1px solid rgba(0,0,0,0.10); color: rgba(120,120,120,0.5); background-color: rgba(0,0,0,0.15); }}"
             self.btn_prev_page.setStyleSheet(nav_style)
             self.btn_next_page.setStyleSheet(nav_style)
-        
-        # CORREÇÃO LOCAL: Usando ID Selectors (#btn_ops) para vencer a briga do CSS!
-        if hasattr(self, "btn_ops_home"):
-            btn_text_color = "#07080a" if c_accent.lightness() > 140 else "#ffffff"
 
-            self.btn_ops_home.setStyleSheet(f"""
-                QPushButton#btn_ops {{
-                    background-color: {accent};
-                    border: 1px solid rgba(0,0,0,0.3);
-                    border-radius: 8px;
-                    color: {btn_text_color};
-                    font-weight: bold;
-                    letter-spacing: 2px;
-                }}
-                QPushButton#btn_ops:hover {{
-                    background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40);
-                    border: 1px solid {accent};
-                    color: #ffffff;
-                }}
-            """)
+        if hasattr(self, "btn_config_top"):
+            self.btn_config_top.setStyleSheet(f"QPushButton {{ background-color: rgba({c_theme.red()}, {c_theme.green()}, {c_theme.blue()}, 0.7); color: {text_color}; border-radius: 20px; font-size: 18px; border: 1px solid {accent}; }} QPushButton:hover {{ background-color: {accent}; color: #000; }}")
             
-            self.btn_config_home.setStyleSheet(f"""
-                QPushButton#btn_config_menu {{
-                    background-color: {accent};
-                    border: 1px solid rgba(0,0,0,0.3);
-                    border-radius: 8px;
-                    color: {btn_text_color};
-                    font-weight: bold;
-                    letter-spacing: 2px;
-                }}
-                QPushButton#btn_config_menu:hover {{
-                    background-color: rgba({c_accent.red()}, {c_accent.green()}, {c_accent.blue()}, 0.40);
-                    border: 1px solid {accent};
+        if hasattr(self, "animated_logo"):
+            png_name = getattr(self, 'app_icon', 'Custom Transparent.ico').replace(".ico", ".png")
+            logo_path = os.path.join(self.icons_dir, png_name)
+            self.animated_logo.update_image(logo_path)
+
+        self.current_text_color = text_color
+        self.update_welcome_text()
+        
+        if hasattr(self, 'welcome_label'):
+            self.welcome_label.setStyleSheet(f"""
+                QLabel#WelcomeLabel {{
+                    background-color: rgba(15, 18, 25, 0.85);
+                    border: 2px solid {accent};
+                    border-radius: 12px;
+                    padding: 5px 30px;
                     color: #ffffff;
+                    font-family: 'Segoe UI';
+                    font-size: 15px;
+                    font-weight: 900;
+                }}
+                QLabel#WelcomeLabel:hover {{
+                    background-color: {accent};
+                    color: #000000;
                 }}
             """)
 
         self.sync_all_whatsapp_themes()
 
     def update_save_tabs_button_visual(self):
-
         accent = QColor(self.accent_color)
-
-        r = accent.red()
-        g = accent.green()
-        b = accent.blue()
+        r, g, b = accent.red(), accent.green(), accent.blue()
 
         bottom_bg = f"rgba({r},{g},{b},0.22)"
         status_bg = f"rgba({r},{g},{b},0.45)"
 
         if hasattr(self, 'background_image_path') and self.background_image_path and os.path.exists(self.background_image_path):
-            
             bottom_bg = f"rgba({r},{g},{b},0.35)"
             status_bg = f"rgba({r},{g},{b},0.60)"
 
-        # FUNDO GERAL DA BARRA INFERIOR
-        self.bottom_bar_widget.setStyleSheet(
-            f"""
-            QWidget#BottomBar {{
-
-                background-color:
-                {bottom_bg};
-
-                border-top:
-                2px solid {self.accent_color};
-
-            }}
-
-            QWidget#BottomBar:hover {{
-
-                background-color:
-                rgba(
-                {r},
-                {g},
-                {b},
-                0.45
-                );
-
-                border-top:
-                2px solid {self.accent_color};
-
-            }}
-
-            """
-        )
+        self.bottom_bar_widget.setStyleSheet(f"QWidget#BottomBar {{ background-color: {bottom_bg}; border-top: 2px solid {self.accent_color}; }} QWidget#BottomBar:hover {{ background-color: rgba({r}, {g}, {b}, 0.45); border-top: 2px solid {self.accent_color}; }}")
         
-        # EFEITO DE LUZ NO FUNDO DA BARRA
         glow = QGraphicsDropShadowEffect()
-
         glow.setBlurRadius(35)
-
         glow.setOffset(0, -5)
-
-        glow.setColor(
-            QColor(
-                r,
-                g,
-                b,
-                180
-            )
-        )
-
+        glow.setColor(QColor(r, g, b, 180))
         self.bottom_bar_widget.setGraphicsEffect(glow)
 
-        # BOTAO SAVE FIXO
-        self.btn_save_session.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: rgba({r},{g},{b},0.85);
-                border: 1px solid {self.accent_color};
-                color:#07080a;
-                font-weight:bold;
-                border-radius:5px;
-                margin-top:8px;
-            }}
-
-            QPushButton:hover {{
-                background-color:{self.accent_color};
-                color:white;
-                border:1px solid white;
-            }}
-            """
-        )
+        self.btn_save_session.setStyleSheet(f"QPushButton {{ background-color: rgba({r},{g},{b},0.85); border: 1px solid {self.accent_color}; color:#07080a; font-weight:bold; border-radius:5px; margin-top:8px; }} QPushButton:hover {{ background-color:{self.accent_color}; color:white; border:1px solid white; }}")
          
-        # STATUS SAVE ABAS         
         if self.save_tabs_enabled:
-
-            self.lbl_status.setStyleSheet(
-                f"""
-                QLabel {{
-                    background-color:{status_bg};
-                    border:1px solid {self.accent_color};
-                    color:white;
-                    font-family:'Segoe UI';
-                    font-size:13px;
-                    font-weight:bold;
-                    border-radius:6px;
-                    padding-left:12px;
-                    padding-right:12px;
-                    padding-top:7px;
-                    padding-bottom:7px;
-                }}
-                """
-            )
-
-
+            self.lbl_status.setStyleSheet(f"QLabel {{ background-color:{status_bg}; border:1px solid {self.accent_color}; color:white; font-family:'Segoe UI'; font-size:13px; font-weight:bold; border-radius:6px; padding-left:12px; padding-right:12px; padding-top:7px; padding-bottom:7px; }}")
             self.lbl_status.setText("Save abas ativado.")
-
         else:
-
-            self.lbl_status.setStyleSheet(
-                """
-                QLabel {
-                    background:transparent;
-                    border:none;
-                    color:white;
-                    font-family:'Segoe UI';
-                    font-size:13px;
-                    font-weight:bold;
-                }
-                """
-            )
-
+            self.lbl_status.setStyleSheet("QLabel { background:transparent; border:none; color:white; font-family:'Segoe UI'; font-size:13px; font-weight:bold; }")
             self.lbl_status.setText("")
 
         self.lbl_status.adjustSize()
-
         self.lbl_status.setFixedHeight(32)
-
         self.btn_save_session.setFixedHeight(30)
 
     def trigger_save_tabs_button(self):
@@ -1144,6 +999,7 @@ class StandaloneHub(QMainWindow):
         self.theme_mode, self.accent_color, self.theme_base_color = data.get("theme_mode", "Escuro"), data.get("accent_color", "#10b981"), data.get("theme_base_color", "#242120")
         
         self.app_icon = data.get("app_icon", "Custom Transparent.ico")
+        self.user_name = data.get("user_name", "Felipe Fiuza") 
         
         self.background_image_path = data.get("background_image_path", "")
         self.opened_tabs_urls, self.pinned_tabs = data.get("opened_tabs", []), data.get("pinned_tabs", [])
@@ -1179,6 +1035,7 @@ class StandaloneHub(QMainWindow):
             "theme_base_color": getattr(self, 'theme_base_color', '#242120'),
             
             "app_icon": getattr(self, 'app_icon', 'Custom Transparent.ico'),
+            "user_name": getattr(self, 'user_name', 'Felipe Fiuza'),
             
             "background_image_path": getattr(self, 'background_image_path', ''),
             "buttons": getattr(self, 'buttons_list', []),
@@ -1193,6 +1050,7 @@ class StandaloneHub(QMainWindow):
     def reset_to_defaults(self):
         self.buttons_list, self.accent_color, self.theme_base_color, self.theme_mode, self.background_image_path, self.is_wp_light, self.current_page, self.auto_save, self.save_tabs_enabled, self.opened_tabs_urls, self.pinned_tabs, self.zoom_settings, self.security_settings, self.history_data = self.config_manager.default_buttons.copy(), self.presets["Padrão (preto/branco)"]["accent"], self.presets["Padrão (preto/branco)"]["theme"], "Escuro", "", False, 0, False, False, [], [], {}, {}, {}
         self.app_icon = "Custom Transparent.ico"
+        self.user_name = "Felipe Fiuza"
         self.config_manager.delete_config_file()
         self.apply_styles()
         self.create_home_tab()
@@ -1206,10 +1064,7 @@ class StandaloneHub(QMainWindow):
             self.search_bar.blockSignals(False)
             self.search_bar.clearFocus() 
             
-        # Instancia a nossa nova Aba Customizada e Inteligente
         browser = BrowserTab(self, self.profile, url, title, is_pinned, lazy_load)
-        
-        # Adiciona no TabWidget
         index = self.tabs.addTab(browser, f"📌 {title[:18]}..." if is_pinned else title[:20])
         
         if not lazy_load:
@@ -1226,14 +1081,12 @@ class StandaloneHub(QMainWindow):
         if index != -1:
             title = "Navegação" if not title.strip() else title
             browser.setProperty("original_label", title)
-            # Atualiza indicadores (que agora controlam o botão real)
             self.update_tab_audio_indicator(browser, browser.page().recentlyAudible())
             
             if getattr(self, 'save_tabs_enabled', False) and not getattr(self, 'is_restoring', False): 
                 self.save_settings(force=True)
 
     def toggle_tab_mute_by_browser(self, browser):
-        # Inverte o mute e força a atualização do ícone sem mudar de aba
         is_muted = browser.page().isAudioMuted()
         browser.page().setAudioMuted(not is_muted)
         self.update_tab_audio_indicator(browser, browser.page().recentlyAudible())
@@ -1246,7 +1099,6 @@ class StandaloneHub(QMainWindow):
             
             is_muted = browser.page().isAudioMuted()
             
-            # Se tem som ou está mutado, mostra o botão do lado ESQUERDO da aba
             if audible or is_muted:
                 icon_text = "🔇" if is_muted else "🔊"
                 btn = self.tabs.tabBar().tabButton(index, QTabBar.ButtonPosition.LeftSide)
@@ -1256,25 +1108,25 @@ class StandaloneHub(QMainWindow):
                     btn.setFixedSize(22, 22)
                     btn.setStyleSheet("background: transparent; border: none; font-size: 14px;")
                     btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                    btn.setFocusPolicy(Qt.FocusPolicy.NoFocus) # Impede que roube a tela
+                    btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
                     self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.LeftSide, btn)
                 
                 btn.setText(icon_text)
                 
-                # Desconecta cliques antigos e conecta o novo passando o browser correto
                 try: btn.clicked.disconnect() 
                 except: pass
                 btn.clicked.connect(lambda _, b=browser: self.toggle_tab_mute_by_browser(b))
             else:
                 self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.LeftSide, None)
             
-            # Atualiza o título (sem o emoji grudado no texto)
             title = browser.property("original_label") or "Navegação"
             is_pinned = browser.property("is_pinned")
             self.tabs.setTabText(index, f"📌 {title[:18]}..." if is_pinned else f"{title[:20]}")
-
+            
+    # =========================================================================================
+    # FUNÇÕES ADICIONAIS
+    # =========================================================================================
     def sync_all_whatsapp_themes(self):
-        """Apenas manda as abas atualizarem seus próprios temas"""
         for i in range(1, self.tabs.count()):
             widget = self.tabs.widget(i)
             if isinstance(widget, BrowserTab): 
@@ -1298,37 +1150,3 @@ class StandaloneHub(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.security_settings = dialog.final_data
             self.save_settings(force=True)
-    
-    def handle_tab_click(self, index):
-        # Limpamos isso! Agora o botão de mute será isolado, 
-        # então o clique normal na aba volta a funcionar só para navegar.
-        pass
-
-    def close_tab(self, index):
-        if index != 0:
-            if self.tabs.widget(index): self.tabs.widget(index).deleteLater()
-            self.tabs.removeTab(index)
-            if not getattr(self, 'is_restoring', False): self.save_settings(force=True)
-
-    def restore_tabs(self):
-        self.is_restoring = True
-        for t in getattr(self, 'pinned_tabs', []): self.open_web_tab(t["url"], t["label"], is_pinned=True, lazy_load=True)
-        if getattr(self, 'save_tabs_enabled', False) and self.opened_tabs_urls:
-            for t in list(self.opened_tabs_urls):
-                if not any(p["url"] == t["url"] for p in getattr(self, 'pinned_tabs', [])): self.open_web_tab(t["url"], t["label"], is_pinned=False, lazy_load=False)
-        QTimer.singleShot(200, lambda: [setattr(self, 'is_restoring', False), self.tabs.setCurrentIndex(0)])
-
-    def restore_extensions_state(self):
-        """Reaplica o estado das extensões ao abrir o programa."""
-        from ui.dialogs import ExtensionsDialog
-        # Cria uma instância temporária apenas para disparar a injeção
-        dummy_dialog = ExtensionsDialog(self, None) 
-        
-        status = getattr(self, 'extensions_status', {})
-        for ext_name, is_active in status.items():
-            if is_active:
-                # Dispara a injeção sem precisar abrir a janela
-                if ext_name == "AdBlocker Global":
-                    dummy_dialog.toggle_adblock(True)
-                elif ext_name == "Dark Mode Universal":
-                    dummy_dialog.toggle_darkmode(True)
