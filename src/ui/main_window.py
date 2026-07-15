@@ -420,9 +420,7 @@ class StandaloneHub(QMainWindow):
             self.filter_buttons_by_search(self.search_filter)
 
     def next_page(self):
-        filtered_list = self.buttons_list
-        if self.search_filter:
-            filtered_list = [b for b in self.buttons_list if self.search_filter.strip().lower() in b.get("label", "").lower()]
+        filtered_list = [item for item in self.buttons_list if self.search_filter.strip().lower() in item.get("label", "").lower()]
         max_pages = max(0, (len(filtered_list) - 1) // self.items_per_page)
         if self.current_page < max_pages:
             self.current_page += 1
@@ -529,14 +527,12 @@ class StandaloneHub(QMainWindow):
         from PyQt6.QtWidgets import QApplication
         from ui.components import FolderPanelWidget
         
-        if item_data in getattr(self, 'buttons_list', []): self.buttons_list.remove(item_data)
-        if item_data in getattr(self, 'folders_list', []): self.folders_list.remove(item_data)
-        for folder in getattr(self, 'folders_list', []):
-            if item_data in folder.get("buttons", []): folder["buttons"].remove(item_data)
+        list1, idx1 = self.find_item_location(item_data)
+        if list1 is not None:
+            list1.pop(idx1)
         
         lbl_name = item_data.get('label', '').lower()
         paths_to_check = [os.path.join(self.icons_dir, f"{lbl_name}.png"), os.path.join(self.icons_dir, f"folder_{lbl_name}.png")]
-        
         for path in paths_to_check:
             if os.path.exists(path):
                 try: os.remove(path)
@@ -544,7 +540,6 @@ class StandaloneHub(QMainWindow):
                 
         self.save_settings(force=True)
         self.filter_buttons_by_search(self.search_filter)
-        
         for widget in QApplication.topLevelWidgets():
             if isinstance(widget, FolderPanelWidget): widget.refresh_grid()
 
@@ -968,14 +963,19 @@ class StandaloneHub(QMainWindow):
     def load_settings(self):
         data = self.config_manager.load()
         self.buttons_list = data.get("buttons", [])
-        self.folders_list = data.get("folders", [])
+        old_folders = data.get("folders", [])
+        
+        # Migração Automática: Junta as pastas antigas na lista unificada de botões!
+        if old_folders:
+            self.buttons_list.extend(old_folders)
+            self.config_manager.save({**data, "buttons": self.buttons_list, "folders": []})
+        
         self.extensions_status = data.get("extensions_status", {})
         self.auto_save, self.save_tabs_enabled = data.get("auto_save", False), data.get("save_tabs_enabled", False)
         self.theme_mode, self.accent_color, self.theme_base_color = data.get("theme_mode", "Escuro"), data.get("accent_color", "#10b981"), data.get("theme_base_color", "#242120")
         
         self.app_icon = data.get("app_icon", "Custom Transparent.ico")
         self.user_name = data.get("user_name", "Felipe Fiuza") 
-        
         self.background_image_path = data.get("background_image_path", "")
         self.opened_tabs_urls, self.pinned_tabs = data.get("opened_tabs", []), data.get("pinned_tabs", [])
         self.zoom_settings, self.security_settings, self.history_data = data.get("zoom_settings", {}), data.get("security", {}), data.get("history", {})
@@ -987,18 +987,14 @@ class StandaloneHub(QMainWindow):
         
         self.track_zoom_levels()
         pinned, urls = [], []
-        
         if hasattr(self, 'tabs'):
             for i in range(1, self.tabs.count()):
                 widget = self.tabs.widget(i)
                 if isinstance(widget, QWebEngineView):
                     url = widget.property("original_url") or widget.url().toString()
                     label = widget.property("original_label") or self.tabs.tabText(i).replace("📌 ", "")
-                    if widget.property("is_pinned"):
-                        pinned.append({"label": label, "url": url})
-                    elif self.save_tabs_enabled:
-                        urls.append({"label": label, "url": url})
-            
+                    if widget.property("is_pinned"): pinned.append({"label": label, "url": url})
+                    elif self.save_tabs_enabled: urls.append({"label": label, "url": url})
             self.pinned_tabs, self.opened_tabs_urls = pinned, urls
 
         self.config_manager.save({
@@ -1008,13 +1004,11 @@ class StandaloneHub(QMainWindow):
             "theme_mode": getattr(self, 'theme_mode', 'Escuro'),
             "accent_color": getattr(self, 'accent_color', '#10b981'),
             "theme_base_color": getattr(self, 'theme_base_color', '#242120'),
-            
             "app_icon": getattr(self, 'app_icon', 'Custom Transparent.ico'),
             "user_name": getattr(self, 'user_name', 'Felipe Fiuza'),
-            
             "background_image_path": getattr(self, 'background_image_path', ''),
-            "buttons": getattr(self, 'buttons_list', []),
-            "folders": getattr(self, 'folders_list', []),  
+            "buttons": self.buttons_list, # Salva TUDO na gaveta principal
+            "folders": [], # Mantém limpo, pois as pastas vivem no buttons_list
             "opened_tabs": getattr(self, 'opened_tabs_urls', []),
             "pinned_tabs": getattr(self, 'pinned_tabs', []),
             "zoom_settings": getattr(self, 'zoom_settings', {}),
@@ -1166,41 +1160,26 @@ class StandaloneHub(QMainWindow):
 
     # --- NOVO: BUSCA SEGURA DE ID FÍSICO NA MEMÓRIA ---
     def get_global_item_index(self, item):
-        all_items = self.buttons_list + getattr(self, 'folders_list', [])
+        all_items = list(self.buttons_list)
+        for f in self.buttons_list:
+            if f.get("type") == "folder":
+                all_items.extend(f.get("buttons", []))
         for idx, obj in enumerate(all_items):
-            if id(obj) == id(item):
-                return idx
+            if id(obj) == id(item): return idx
         return -1
-
-    # --- MOTOR DE TROCA UNIVERSAL (SWAP) ---
-    def swap_items(self, src_idx, target_idx):
-        all_items = self.buttons_list + getattr(self, 'folders_list', [])
-        
-        if src_idx < 0 or src_idx >= len(all_items) or target_idx < 0 or target_idx >= len(all_items):
-            return
-            
-        # Troca os itens de posição
-        all_items[src_idx], all_items[target_idx] = all_items[target_idx], all_items[src_idx]
-        
-        # A MÁGICA: Guarda todos na mesma gaveta para a ordem visual nunca mais ser separada/perdida!
-        self.buttons_list = all_items
-        self.folders_list = []
-        
-        self.save_settings(force=True)
-        self.filter_buttons_by_search(self.search_filter)
-        
-        from PyQt6.QtWidgets import QApplication
-        from ui.components import FolderPanelWidget
-        for widget in QApplication.topLevelWidgets():
-            if isinstance(widget, FolderPanelWidget):
-                widget.refresh_grid()
+    
+    def get_item_by_id(self, target_id):
+        all_items = list(self.buttons_list)
+        for f in self.buttons_list:
+            if f.get("type") == "folder":
+                all_items.extend(f.get("buttons", []))
+        for obj in all_items:
+            if id(obj) == target_id: return obj
+        return None
 
     def filter_buttons_by_search(self, text):
         self.search_filter = text
-        all_items = self.buttons_list + getattr(self, 'folders_list', [])
-        
-        filtered_list = [item for item in all_items if self.search_filter.strip().lower() in item.get("label", "").lower()]
-        
+        filtered_list = [item for item in self.buttons_list if self.search_filter.strip().lower() in item.get("label", "").lower()]
         self.render_grid(self.grid_layout, filtered_list)
         
         max_pages = max(0, (len(filtered_list) - 1) // self.items_per_page)
@@ -1228,3 +1207,192 @@ class StandaloneHub(QMainWindow):
             layout.addWidget(btn, row, col)
             col += 1
             if col > 3: col, row = 0, row + 1
+
+    # =========================================================================================
+    # FUNÇÕES DE FAVORITOS (RESTAURADAS E APRIMORADAS)
+    # =========================================================================================
+    def filter_favorites(self, text):
+        self.update_favorites_panel(text)
+
+    def update_favorites_panel(self, filter_text=""):
+        if not hasattr(self, 'fav_panel_widget'): return
+        while self.fav_hbox.count():
+            item = self.fav_hbox.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+            
+        all_items = self.buttons_list + getattr(self, 'folders_list', [])
+        fav_items = [b for b in all_items if b.get("favorite", False)]
+        
+        if filter_text: 
+            fav_items = [b for b in fav_items if filter_text.strip().lower() in b.get("label", "").lower()]
+            
+        if not fav_items:
+            self.fav_panel_widget.setVisible(False)
+            return
+            
+        self.fav_panel_widget.setVisible(True)
+        bg_rgba = f"rgba({QColor(self.accent_color).red()}, {QColor(self.accent_color).green()}, {QColor(self.accent_color).blue()}, 0.85)"
+            
+        for item in fav_items:
+            btn = QPushButton(item.get("label", "Favorito"))
+            btn.setObjectName("FavItemBtn")
+            btn.setFixedSize(140, 32)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(f"QPushButton#FavItemBtn {{ background-color: {bg_rgba}; border: 1px solid rgba(0,0,0,0.5); color: #07080a; font-size: 12px; font-weight: bold; border-radius: 4px; }} QPushButton#FavItemBtn:hover {{ background-color: {self.accent_color}; }}")
+            
+            if item.get("type") == "folder":
+                btn.clicked.connect(lambda checked, f=item: self.open_folder_from_fav(f))
+            else:
+                btn.clicked.connect(lambda checked, u=item.get("url", ""), l=item.get("label", ""): self.open_web_tab(u, l))
+                
+            self.fav_hbox.addWidget(btn)
+        self.fav_hbox.addStretch()
+
+    def open_folder_from_fav(self, folder_data):
+        from ui.components import FolderPanelWidget
+        panel = FolderPanelWidget(self, folder_data)
+        panel.exec()
+
+    def show_fav_panel(self):
+        if hasattr(self, 'fav_area_layout') and self.fav_area_layout.currentWidget() != self.fav_panel_widget:
+            self.update_favorites_panel(self.fav_search_bar.text())
+            self.fav_area_layout.setCurrentWidget(self.fav_panel_widget)
+
+    def hide_fav_panel(self):
+        if hasattr(self, 'fav_area_layout') and self.fav_area_layout.currentWidget() == self.fav_panel_widget:
+            if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible() and self.fav_search_bar.hasFocus(): return
+            self.fav_area_layout.setCurrentWidget(self.fav_placeholder)
+
+    def check_mouse_position_for_favorites(self):
+        if not hasattr(self, 'home_widget') or not self.home_widget or self.tabs.currentIndex() != 0:
+            self.hide_fav_panel()
+            return
+        
+        all_items = self.buttons_list + getattr(self, 'folders_list', [])
+        if not any(b.get("favorite", False) for b in all_items): return
+        
+        if hasattr(self, 'fav_search_bar') and self.fav_search_bar.isVisible() and self.fav_search_bar.hasFocus(): return
+        
+        cursor_pos = self.mapFromGlobal(QCursor.pos())
+        self.show_fav_panel() if 0 <= cursor_pos.y() <= 95 else self.hide_fav_panel()
+
+    def eventFilter(self, obj, event):
+        if obj == getattr(self, 'welcome_label', None) and event.type() == QEvent.Type.MouseButtonDblClick:
+            self.edit_user_name()
+            return True
+            
+        if obj == self.tabs.tabBar() and event.type() == QEvent.Type.MouseMove and self.tabs.currentIndex() == 0:
+            all_items = self.buttons_list + getattr(self, 'folders_list', [])
+            if any(b.get("favorite", False) for b in all_items): self.show_fav_panel()
+        return super().eventFilter(obj, event)
+
+    def delete_button_by_data(self, item_data):
+        from PyQt6.QtWidgets import QApplication
+        from ui.components import FolderPanelWidget
+        
+        if item_data in getattr(self, 'buttons_list', []): self.buttons_list.remove(item_data)
+        if item_data in getattr(self, 'folders_list', []): self.folders_list.remove(item_data)
+        for folder in getattr(self, 'folders_list', []):
+            if item_data in folder.get("buttons", []): folder["buttons"].remove(item_data)
+        
+        lbl_name = item_data.get('label', '').lower()
+        paths_to_check = [os.path.join(self.icons_dir, f"{lbl_name}.png"), os.path.join(self.icons_dir, f"folder_{lbl_name}.png")]
+        
+        for path in paths_to_check:
+            if os.path.exists(path):
+                try: os.remove(path)
+                except: pass
+                
+        self.save_settings(force=True)
+        self.filter_buttons_by_search(self.search_filter)
+        
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, FolderPanelWidget): widget.refresh_grid()
+    
+    def find_item_location(self, target):
+        target_id = id(target)
+        for idx, obj in enumerate(self.buttons_list):
+            if id(obj) == target_id: return self.buttons_list, idx
+            
+        for folder in self.buttons_list:
+            if folder.get("type") == "folder":
+                for idx, obj in enumerate(folder.get("buttons", [])):
+                    if id(obj) == target_id: return folder["buttons"], idx
+                    
+        return None, -1
+    
+        # --- MOTOR DE TROCA UNIVERSAL (SWAP) ---
+    def swap_items(self, item1, item2):
+        list1, idx1 = self.find_item_location(item1)
+        list2, idx2 = self.find_item_location(item2)
+        
+        if list1 is not None and list2 is not None:
+            list1[idx1] = item2
+            list2[idx2] = item1
+            self.save_settings(force=True)
+            self.filter_buttons_by_search(self.search_filter)
+            
+            from PyQt6.QtWidgets import QApplication
+            from ui.components import FolderPanelWidget
+            for widget in QApplication.topLevelWidgets():
+                if isinstance(widget, FolderPanelWidget):
+                    widget.refresh_grid()
+
+    def move_item_to_folder_by_id(self, item, folder_id):
+        target_folder = self.get_item_by_id(folder_id)
+        if target_folder is None or target_folder.get("type") != "folder": return
+        
+        list1, idx1 = self.find_item_location(item)
+        if list1 is not None:
+            list1.pop(idx1)
+            if "buttons" not in target_folder: target_folder["buttons"] = []
+            target_folder["buttons"].append(item)
+            self.save_settings(force=True)
+            self.filter_buttons_by_search(self.search_filter) 
+            
+            from PyQt6.QtWidgets import QApplication
+            from ui.components import FolderPanelWidget
+            for widget in QApplication.topLevelWidgets():
+                if isinstance(widget, FolderPanelWidget):
+                    widget.refresh_grid()
+
+    def move_item_to_home(self, item):
+        list1, idx1 = self.find_item_location(item)
+        if list1 is not None:
+            list1.pop(idx1)
+            self.buttons_list.append(item)
+            self.save_settings(force=True)
+            self.filter_buttons_by_search(self.search_filter) 
+            
+            from PyQt6.QtWidgets import QApplication
+            from ui.components import FolderPanelWidget
+            for widget in QApplication.topLevelWidgets():
+                if isinstance(widget, FolderPanelWidget):
+                    widget.refresh_grid()
+    
+    def move_item_to_folder_by_index(self, item, folder_idx):
+        """Move o botão para dentro da pasta original usando o índice real da lista e atualiza a UI."""
+        if folder_idx < 0 or folder_idx >= len(self.folders_list):
+            return
+            
+        list1, idx1 = self.find_item_location(item)
+        if list1 is not None:
+            # Remove o item da localização atual (Home)
+            list1.pop(idx1)
+            
+            # Acessa diretamente a pasta verdadeira na memória do Hub
+            target_folder = self.folders_list[folder_idx]
+            if "buttons" not in target_folder: 
+                target_folder["buttons"] = []
+                
+            # Adiciona o item à pasta correta e salva
+            target_folder["buttons"].append(item)
+            self.save_settings(force=True)
+            self.filter_buttons_by_search(self.search_filter) 
+            
+            # Força o painel da pasta a se atualizar caso ele esteja aberto
+            from PyQt6.QtWidgets import QApplication
+            from ui.components import FolderPanelWidget
+            for widget in QApplication.topLevelWidgets():
+                if isinstance(widget, FolderPanelWidget):
+                    widget.refresh_grid()

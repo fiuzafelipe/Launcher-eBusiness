@@ -1,9 +1,11 @@
 import os
 import hashlib
 import subprocess
+import ctypes
 from PyQt6.QtWidgets import (QApplication, QPushButton, QLabel, QFrame, QGridLayout, 
                              QMenu, QMessageBox, QVBoxLayout, QWidget, QTabWidget, 
-                             QLineEdit, QDialog, QHBoxLayout, QFileDialog, QGraphicsDropShadowEffect)
+                             QLineEdit, QDialog, QHBoxLayout, QFileDialog, QGraphicsDropShadowEffect,
+                             QComboBox, QListWidget, QListWidgetItem)
 from PyQt6.QtCore import Qt, QMimeData, QUrl, QPoint, QTimer, QPointF, QVariantAnimation, QRect, QEasingCurve
 from PyQt6.QtGui import QPixmap, QColor, QDrag, QPainter, QIcon, QShortcut, QKeySequence, QPainterPath, QPen
 from PyQt6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
@@ -145,15 +147,40 @@ class DraggableToolButton(QFrame):
     def show_context_menu(self, pos):
         menu = QMenu(self)
         menu.setStyleSheet(f"QMenu {{ background-color: #161b24; color: #fff; border: 1px solid {self.hub.accent_color}; font-family: 'Segoe UI'; font-size: 13px; font-weight: bold; border-radius: 4px; padding: 5px; }} QMenu::item {{ padding: 8px 25px; border-radius: 4px; }} QMenu::item:selected {{ background-color: {self.hub.accent_color}; color: #000; }}")
+        
         edit_action = menu.addAction("✏️ Editar")
         swap_action = menu.addAction("🔄 Substituir")
+        menu.addSeparator()
+
+        is_folder = self.item_data.get("type") == "folder"
+        from PyQt6.QtWidgets import QDialog
+        is_in_folder = isinstance(self.window(), QDialog) and hasattr(self.window(), 'folder_data')
         
+        send_to_folder_action = None
+        send_to_home_action = None
+        
+        if not is_folder:
+            if is_in_folder:
+                send_to_home_action = menu.addAction("🏠 Enviar para a Home")
+            else:
+                send_to_folder_action = menu.addAction("📤 Enviar para Pasta...")
+                
         action = menu.exec(self.mapToGlobal(pos))
+        
         if action == edit_action: 
             self.hub.edit_button_dialog(self.item_data)
         elif action == swap_action:
-            if hasattr(self.hub, 'open_swap_dialog'):
-                self.hub.open_swap_dialog(self.item_data)
+            from ui.components import SwapButtonDialog
+            dialog = SwapButtonDialog(self.hub, self.item_data)
+            dialog.exec()
+        elif send_to_home_action and action == send_to_home_action:
+            if hasattr(self.hub, 'move_item_to_home'):
+                self.hub.move_item_to_home(self.item_data)
+                if hasattr(self.window(), 'refresh_grid'): self.window().refresh_grid()
+        elif send_to_folder_action and action == send_to_folder_action:
+            from ui.components import SendToFolderDialog
+            dialog = SendToFolderDialog(self.hub, self.item_data)
+            dialog.exec()
 
     def toggle_favorite(self):
         self.item_data["favorite"] = not self.item_data.get("favorite", False)
@@ -166,7 +193,7 @@ class DraggableToolButton(QFrame):
         if reply == QMessageBox.StandardButton.Yes:
             self.hub.delete_button_by_data(self.item_data)
             parent_window = self.window()
-            if isinstance(parent_window, FolderPanelWidget):
+            if hasattr(parent_window, 'refresh_grid'):
                 parent_window.refresh_grid()
             else:
                 self.hub.filter_buttons_by_search(self.hub.search_filter)
@@ -183,7 +210,8 @@ class DraggableToolButton(QFrame):
         self.__drag_occurred = True
         drag = QDrag(self)
         mime_data = QMimeData()
-        mime_data.setText(str(self.item_index)) 
+        # Envia a ID única da memória RAM
+        mime_data.setText(str(id(self.item_data))) 
         drag.setMimeData(mime_data)
         drag.setPixmap(self.grab())
         drag.setHotSpot(event.pos())
@@ -198,14 +226,18 @@ class DraggableToolButton(QFrame):
         self.update_card_style() 
 
     def dropEvent(self, event):
-        source_idx = int(event.mimeData().text())
-        target_idx = self.item_index
+        try: source_id = int(event.mimeData().text())
+        except ValueError: return
+        
+        target_item = self.item_data
         self.update_card_style() 
         
-        if source_idx != target_idx:
-            if hasattr(self.hub, 'swap_items'):
-                self.hub.swap_items(source_idx, target_idx)
-            event.acceptProposedAction()
+        if hasattr(self.hub, 'get_item_by_id'):
+            source_item = self.hub.get_item_by_id(source_id)
+            if source_item and id(source_item) != id(target_item):
+                if hasattr(self.hub, 'swap_items'):
+                    self.hub.swap_items(source_item, target_item)
+                event.acceptProposedAction()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -214,6 +246,7 @@ class DraggableToolButton(QFrame):
                 return
             
             if self.item_data.get("type") == "folder":
+                from ui.components import FolderPanelWidget 
                 panel = FolderPanelWidget(self.hub, self.item_data)
                 panel.exec()
             else:
@@ -228,21 +261,46 @@ class DraggableToolButton(QFrame):
                     else:
                         QMessageBox.warning(self, "Erro", "Arquivo não encontrado!")
                 
-                # --- LANÇADOR INSTANTÂNEO DE .EXE (Ctypes WScript.Shell) ---
                 elif url.lower().endswith(('.exe', '.bat', '.cmd', '.lnk')) or os.path.isfile(url):
                     exe_path = os.path.normpath(url)
                     exe_name = os.path.splitext(os.path.basename(exe_path))[0]
                     
-                    ps_script = f"""
-                    $p = Get-Process '{exe_name}' -ErrorAction SilentlyContinue | Select-Object -First 1
-                    if ($p) {{
-                        $wshell = New-Object -ComObject wscript.shell
-                        $wshell.AppActivate($p.Id)
-                    }} else {{
-                        Start-Process '{exe_path}'
-                    }}
-                    """
-                    subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script], creationflags=subprocess.CREATE_NO_WINDOW)
+                    try:
+                        EnumWindows = ctypes.windll.user32.EnumWindows
+                        EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+                        GetWindowThreadProcessId = ctypes.windll.user32.GetWindowThreadProcessId
+                        IsWindowVisible = ctypes.windll.user32.IsWindowVisible
+                        
+                        out = subprocess.check_output(f'tasklist /FI "IMAGENAME eq {exe_name}*" /FO CSV /NH', shell=True, text=True)
+                        pids = []
+                        for line in out.strip().split('\n'):
+                            parts = line.split('","')
+                            if len(parts) > 1 and exe_name.lower() in parts[0].lower():
+                                pids.append(int(parts[1].replace('"', '')))
+
+                        if not pids:
+                            os.startfile(exe_path)
+                        else:
+                            found_hwnd = None
+                            def foreach_window(hwnd, lParam):
+                                nonlocal found_hwnd
+                                if IsWindowVisible(hwnd):
+                                    pid = ctypes.c_ulong()
+                                    GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                                    if pid.value in pids:
+                                        found_hwnd = hwnd
+                                        return False 
+                                return True
+                            
+                            EnumWindows(EnumWindowsProc(foreach_window), 0)
+                            
+                            if found_hwnd:
+                                ctypes.windll.user32.ShowWindow(found_hwnd, 9) 
+                                ctypes.windll.user32.SetForegroundWindow(found_hwnd)
+                            else:
+                                os.startfile(exe_path)
+                    except Exception as e:
+                        QMessageBox.warning(self, "Erro", f"Falha ao abrir:\n{e}")
                 
                 elif url.startswith("remote://"):
                     try: launch_remote_tool(url.split("//")[1])
@@ -273,6 +331,7 @@ class DraggableToolButton(QFrame):
         self.shadow.setColor(QColor(0, 0, 0, 80))
         super().leaveEvent(event)
 
+
 class MediaViewerDialog(QDialog):
     def __init__(self, parent, file_path):
         super().__init__(parent)
@@ -281,7 +340,10 @@ class MediaViewerDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
-        self.setStyleSheet("QDialog { background-color: rgba(17, 20, 26, 0.95); border: 2px solid #10b981; border-radius: 12px; } QLabel { color: white; font-weight: bold; background: transparent; border: none; }")
+        self.setStyleSheet("""
+            QDialog { background-color: rgba(17, 20, 26, 0.95); border: 2px solid #10b981; border-radius: 12px; }
+            QLabel { color: white; font-weight: bold; background: transparent; border: none; }
+        """)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -301,12 +363,14 @@ class MediaViewerDialog(QDialog):
         layout.addLayout(header)
         
         ext = os.path.splitext(file_path)[1].lower()
+        
         if ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp']:
             self.img_label = QLabel()
             self.img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             pixmap = QPixmap(file_path)
             self.img_label.setPixmap(pixmap.scaled(750, 450, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
             layout.addWidget(self.img_label)
+            
         elif ext in ['.mp4', '.avi', '.mkv', '.mov']:
             self.video_widget = QVideoWidget()
             self.video_widget.setStyleSheet("border: 1px solid #333; background-color: #000;")
@@ -332,12 +396,14 @@ class MediaViewerDialog(QDialog):
             controls.addWidget(btn_play)
             controls.addWidget(btn_pause)
             layout.addLayout(controls)
+            
             self.media_player.play()
             
     def close_player(self):
         if hasattr(self, 'media_player'):
             self.media_player.stop()
         self.accept()
+
 
 class FolderCableFrame(QFrame):
     def __init__(self, parent_panel):
@@ -360,14 +426,17 @@ class FolderCableFrame(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         cards = []
+
         widgets = self.findChildren(DraggableToolButton)
         for widget in widgets:
             if widget.isVisible():
                 pos = widget.mapTo(self, QPoint(widget.width()//2, widget.height()//2))
                 cards.append(pos)
+
         if len(cards) < 2:
             painter.end()
             return
+
         accent = QColor(self.panel.hub.accent_color)
         shadow_pen = QPen(QColor(0,0,0,120), 14, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         cable_pen = QPen(QColor(5,5,5,230), 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
@@ -382,12 +451,14 @@ class FolderCableFrame(QFrame):
             path.moveTo(p1)
             curva = 60
             path.cubicTo(QPointF(p1.x(), p1.y()+curva), QPointF(p2.x(), p2.y()+curva), p2)
+
             painter.setPen(shadow_pen)
             painter.drawPath(path)
             painter.setPen(cable_pen)
             painter.drawPath(path)
             painter.setPen(glow_pen)
             painter.drawPath(path)
+
         painter.end()
 
 class FolderPanelWidget(QDialog):
@@ -818,3 +889,241 @@ class ThemeSelectorButton(QPushButton):
             
         if hasattr(self.hub, 'filter_buttons_by_search'):
             self.hub.filter_buttons_by_search(self.hub.search_filter)
+
+
+# --- NOVO PAINEL: ENVIAR PARA PASTA ---
+class SendToFolderDialog(QDialog):
+    def __init__(self, parent_hub, current_item):
+        super().__init__(parent_hub)
+        self.hub = parent_hub
+        self.current_item = current_item
+        
+        self.setWindowTitle("Enviar para Pasta")
+        self.setFixedSize(400, 450)
+        self.setWindowOpacity(0.95)
+        
+        accent = self.hub.accent_color
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {accent}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 14px; font-weight: bold; }}
+            QListWidget {{ background-color: #161b24; border: 1px solid {accent}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; font-size: 15px; font-weight: bold; outline: none; }}
+            QListWidget::item {{ padding: 12px; border-radius: 6px; border-bottom: 1px solid #1c212d; }}
+            QListWidget::item:hover {{ background-color: rgba(255, 255, 255, 0.1); }}
+            QListWidget::item:selected {{ background-color: {accent}; color: #000; }}
+            QPushButton {{ background-color: {accent}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
+            QPushButton#btn_cancel {{ background-color: #161b24; color: #fff; border: 1px solid #232a38; }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(25, 25, 25, 25)
+        layout.setSpacing(15)
+        
+        lbl_info = QLabel(f"Enviar [ {self.current_item.get('label', '')} ] para:")
+        lbl_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl_info)
+        
+        self.list_widget = QListWidget()
+        self.list_widget.itemClicked.connect(self.on_item_clicked)
+        self.list_widget.itemDoubleClicked.connect(self.execute_send)
+        layout.addWidget(self.list_widget)
+        
+        btn_layout = QHBoxLayout()
+        self.btn_back = QPushButton("Cancelar")
+        self.btn_back.setObjectName("btn_cancel")
+        self.btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_back.clicked.connect(self.reject)
+        
+        self.btn_confirm = QPushButton("📤 Confirmar Envio")
+        self.btn_confirm.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_confirm.clicked.connect(self.execute_send)
+        self.btn_confirm.setEnabled(False)
+        
+        btn_layout.addWidget(self.btn_back)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.btn_confirm)
+        layout.addLayout(btn_layout)
+        
+        self.populate_folders()
+
+    def populate_folders(self):
+        folders = [f for f in self.hub.buttons_list if f.get("type") == "folder"]
+        if not folders:
+            self.list_widget.addItem("Nenhuma pasta disponível.")
+            self.list_widget.setEnabled(False)
+            return
+            
+        for folder in folders:
+            if id(folder) == id(self.current_item): continue # Não deixa a pasta se engolir!
+            item = QListWidgetItem(f"📁 {folder.get('label', 'Pasta')}")
+            item.setData(Qt.ItemDataRole.UserRole, id(folder))
+            self.list_widget.addItem(item)
+
+    def on_item_clicked(self, item):
+        self.btn_confirm.setEnabled(True)
+
+    def execute_send(self):
+        selected = self.list_widget.currentItem()
+        if selected:
+            folder_id = selected.data(Qt.ItemDataRole.UserRole)
+            if folder_id:
+                if hasattr(self.hub, 'move_item_to_folder_by_id'):
+                    self.hub.move_item_to_folder_by_id(self.current_item, folder_id)
+                self.accept()
+
+# --- PAINEL: SUBSTITUIR (BLINDADO) ---
+class SwapButtonDialog(QDialog):
+    def __init__(self, parent_hub, current_item):
+        super().__init__(parent_hub)
+        self.hub = parent_hub
+        self.current_item = current_item
+        self.history = [] 
+        
+        self.item_refs = [] 
+        self.tree_data = self.build_tree()
+        self.current_nodes = self.tree_data
+        
+        self.setWindowTitle("Substituir Item")
+        self.setFixedSize(450, 500)
+        self.setWindowOpacity(0.95)
+        
+        accent = self.hub.accent_color
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: #11141a; border: 1px solid {accent}; border-radius: 8px; }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI'; font-size: 14px; font-weight: bold; }}
+            QListWidget {{ background-color: #161b24; border: 1px solid {accent}; border-radius: 6px; color: #fff; padding: 10px; font-family: 'Segoe UI'; font-size: 15px; font-weight: bold; outline: none; }}
+            QListWidget::item {{ padding: 12px; border-radius: 6px; border-bottom: 1px solid #1c212d; }}
+            QListWidget::item:hover {{ background-color: rgba(255, 255, 255, 0.1); }}
+            QListWidget::item:selected {{ background-color: {accent}; color: #000; }}
+            QPushButton {{ background-color: {accent}; color: #000; font-family: 'Segoe UI'; font-weight: bold; padding: 10px; border-radius: 6px; }}
+            QPushButton#btn_cancel {{ background-color: #161b24; color: #fff; border: 1px solid #232a38; }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(25, 25, 25, 25)
+        layout.setSpacing(15)
+        
+        self.lbl_info = QLabel(f"Substituir: [ {self.current_item.get('label', '')} ]")
+        self.lbl_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.lbl_info)
+        
+        self.list_widget = QListWidget()
+        self.list_widget.itemClicked.connect(self.on_item_clicked)
+        self.list_widget.itemDoubleClicked.connect(self.on_item_double_clicked)
+        layout.addWidget(self.list_widget)
+        
+        btn_layout = QHBoxLayout()
+        self.btn_back = QPushButton("⬅ Voltar")
+        self.btn_back.setObjectName("btn_cancel")
+        self.btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_back.clicked.connect(self.go_back)
+        self.btn_back.setVisible(False)
+        
+        self.btn_confirm = QPushButton("🔄 Confirmar")
+        self.btn_confirm.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_confirm.clicked.connect(self.action_confirm_swap)
+        self.btn_confirm.setEnabled(False)
+        
+        btn_layout.addWidget(self.btn_back)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.btn_confirm)
+        layout.addLayout(btn_layout)
+        
+        self.populate_list()
+
+    def build_tree(self):
+        tree = []
+        all_global = self.hub.buttons_list
+        folders = [f for f in all_global if f.get("type") == "folder"]
+        
+        home_node = {"label": "🏠 Itens na Home (Páginas)", "type": "category", "children": []}
+        items_per_page = self.hub.items_per_page
+        max_pages = max(1, (len(all_global) + items_per_page - 1) // items_per_page) if all_global else 1
+        
+        for p in range(max_pages):
+            page_items = all_global[p * items_per_page : (p + 1) * items_per_page]
+            page_children = []
+            
+            for item in page_items:
+                if id(item) == id(self.current_item): continue
+                
+                self.item_refs.append(item)
+                ref_idx = len(self.item_refs) - 1
+                
+                icon = "📁" if item.get("type") == "folder" else "🔘"
+                page_children.append({"label": f"{icon} {item.get('label', 'Sem Nome')}", "type": "item", "ref_idx": ref_idx})
+                
+            if page_children:
+                home_node["children"].append({"label": f"📄 Página {p + 1}", "type": "category", "children": page_children})
+        
+        if home_node["children"]:
+            tree.append(home_node)
+            
+        if folders:
+            folders_node = {"label": "📂 Conteúdo das Pastas", "type": "category", "children": []}
+            for folder in folders:
+                if id(folder) == id(self.current_item): continue
+                
+                folder_children = []
+                for item in folder.get("buttons", []):
+                    if id(item) == id(self.current_item): continue
+                    
+                    self.item_refs.append(item)
+                    ref_idx = len(self.item_refs) - 1
+                    
+                    folder_children.append({"label": f"🔘 {item.get('label', 'Sem Nome')}", "type": "item", "ref_idx": ref_idx})
+                    
+                if folder_children:
+                    folders_node["children"].append({"label": f"📁 Pasta: {folder.get('label')}", "type": "category", "children": folder_children})
+                    
+            if folders_node["children"]:
+                tree.append(folders_node)
+                
+        if not tree:
+            tree.append({"label": "Nenhum item disponível para troca.", "type": "empty"})
+            
+        return tree
+
+    def populate_list(self):
+        self.list_widget.clear()
+        for node in self.current_nodes:
+            item = QListWidgetItem(node["label"])
+            item.setData(Qt.ItemDataRole.UserRole, node)
+            self.list_widget.addItem(item)
+            
+        self.btn_back.setVisible(len(self.history) > 0)
+        self.btn_confirm.setEnabled(False)
+
+    def on_item_clicked(self, item):
+        node = item.data(Qt.ItemDataRole.UserRole)
+        self.btn_confirm.setEnabled(node["type"] == "item")
+
+    def on_item_double_clicked(self, item):
+        node = item.data(Qt.ItemDataRole.UserRole)
+        if node["type"] == "category":
+            self.history.append(self.current_nodes)
+            self.current_nodes = node["children"]
+            self.populate_list()
+        elif node["type"] == "item":
+            self.execute_swap(node["ref_idx"])
+
+    def go_back(self):
+        if self.history:
+            self.current_nodes = self.history.pop()
+            self.populate_list()
+
+    def action_confirm_swap(self):
+        self.execute_swap()
+
+    def execute_swap(self, target_idx=None):
+        if target_idx is None or isinstance(target_idx, bool):
+            selected = self.list_widget.currentItem()
+            if selected:
+                node = selected.data(Qt.ItemDataRole.UserRole)
+                if node["type"] == "item":
+                    target_idx = node.get("ref_idx")
+        
+        if target_idx is not None:
+            target_item = self.item_refs[target_idx]
+            if hasattr(self.hub, 'swap_items'):
+                self.hub.swap_items(self.current_item, target_item)
+            self.accept()

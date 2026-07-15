@@ -44,7 +44,6 @@ class CreateFolderDialog(QDialog):
         img_layout.addWidget(self.btn_rem_img)
         layout.addLayout(img_layout)
         
-        # --- NOVA CHECKBOX DE TRANSPARÊNCIA (Pasta) ---
         self.check_transparent = QCheckBox("Tornar fundo da imagem transparente")
         if is_editing:
             self.check_transparent.setChecked(self.folder_data.get("transparent_icon", False))
@@ -77,7 +76,6 @@ class CreateFolderDialog(QDialog):
             new_path = os.path.join(self.parent_hub.icons_dir, f"folder_{new_name.lower()}.png")
             if os.path.exists(old_path): os.rename(old_path, new_path)
         
-        # O SEGOTE DE OUVIR O CHECKBOX E ENVIAR AO MOTOR DE IMAGEM
         if self.selected_img == "REMOVE":
             target = os.path.join(self.parent_hub.icons_dir, f"folder_{new_name.lower()}.png")
             if os.path.exists(target): os.remove(target)
@@ -85,7 +83,6 @@ class CreateFolderDialog(QDialog):
             dest_path = os.path.join(self.parent_hub.icons_dir, f"folder_{new_name.lower()}.png")
             process_and_save_icon(self.selected_img, dest_path, transparent=self.check_transparent.isChecked())
             
-        # Salva as decisões
         if self.folder_data:
             self.folder_data.update({
                 "label": new_name, 
@@ -93,7 +90,8 @@ class CreateFolderDialog(QDialog):
                 "transparent_icon": self.check_transparent.isChecked()
             })
         else:
-            self.parent_hub.folders_list.append({
+            # O SEGREDO ESTÁ AQUI: As novas pastas agora são gravadas diretamente no buttons_list!
+            self.parent_hub.buttons_list.append({
                 "label": new_name, 
                 "subtitle": self.input_sub.text(), 
                 "type": "folder", 
